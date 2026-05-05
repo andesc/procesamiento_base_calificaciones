@@ -3,6 +3,7 @@ import pandas as pd
 import io
 import os
 import unicodedata
+import difflib
 
 # Configuración de la página
 st.set_page_config(page_title="Procesamiento Base Calificaciones", page_icon="📧")
@@ -15,14 +16,10 @@ def limpiar_texto(texto):
     """Elimina tildes, convierte Ñ en ni y normaliza texto."""
     if not isinstance(texto, str):
         return str(texto)
-    # Reemplazo específico de Ñ/ñ antes de normalizar
     texto = texto.replace('ñ', 'ni').replace('Ñ', 'Ni')
-    # Eliminar tildes
-    trans_tab = str.maketrans(
-        "áéíóúÁÉÍÓÚ",
-        "aeiouAEIOU"
-    )
-    return texto.translate(trans_tab)
+    texto = unicodedata.normalize('NFD', texto)
+    texto = ''.join(c for c in texto if unicodedata.category(c) != 'Mn')
+    return texto
 
 # --- INICIALIZACIÓN DE ESTADO ---
 if 'count' not in st.session_state:
@@ -46,7 +43,7 @@ st.markdown(f"Sube los archivos para generar la base de **{texto_destino}**.")
 st.markdown("""
 **Pasos a seguir:**
 1. **Archivo CSV (Canvas):** Exportar 'Vista actual' desde Calificaciones. No cambies el nombre.
-2. **Archivo XLSX (Base):** Filtra tu materia. Asegúrate de que tenga las columnas necesarias.
+2. **Archivo XLSX (Base):** Debe contener columna 'materia'.
 3. **Procesamiento:** Sube los archivos 👇 y luego haz clic en descargar.
 """)
 
@@ -67,68 +64,110 @@ with col2:
 
 if archivo_csv and archivo_xlsx:
     try:
-        # --- Lógica de Nombres de Salida ---
+        # --- NOMBRE DE SALIDA ---
         nombre_original = archivo_csv.name
         nombre_sin_ext = os.path.splitext(nombre_original)[0]
+
         try:
             fecha = f"{nombre_sin_ext[8:10]}-{nombre_sin_ext[5:7]}"
-            materia_nom = nombre_sin_ext.split("Calificaciones-")[1] if "Calificaciones-" in nombre_sin_ext else "Procesado"
+            materia_nom = nombre_sin_ext.split("Calificaciones-")[1]
         except:
             fecha, materia_nom = "SinFecha", "Materia"
-        
+
         suffix = "HUB" if opcion_base == "Base para Hubspot" else "WSP"
         nombre_salida = f"{materia_nom}-{fecha}-{suffix}.xlsx"
 
-        # --- Lectura y Normalización ---
+        # --- LECTURA ---
         df_csv = pd.read_csv(archivo_csv)
         df_xlsx = pd.read_excel(archivo_xlsx)
 
         df_csv.columns = df_csv.columns.str.strip()
         df_xlsx.columns = df_xlsx.columns.str.strip().str.lower()
 
-        # Normalizar IDs de cruce
-        df_csv["SIS Login ID"] = df_csv["SIS Login ID"].astype(str).str.strip().str.replace('.0', '', regex=False)
-        df_xlsx["dni"] = df_xlsx["dni"].astype(str).str.strip().str.replace('.0', '', regex=False)
+        # --- EXTRAER MATERIA DESDE CSV ---
+        materia_csv = ""
+        if "Calificaciones-" in nombre_sin_ext:
+            materia_csv = nombre_sin_ext.split("Calificaciones-")[1]
 
-        # --- CRUCE DE DATOS ---
-        # Para Hubspot solo necesitamos email. Para Whatsapp necesitamos mas datos del XLSX.
+        materia_csv = materia_csv.replace("_", " ")
+        materia_csv = limpiar_texto(materia_csv).lower().strip()
+
+        # --- NORMALIZAR MATERIAS XLSX ---
+        df_xlsx["materia_normalizada"] = df_xlsx["materia"].apply(
+            lambda x: limpiar_texto(str(x)).lower().strip()
+        )
+
+        # --- FUZZY MATCHING ---
+        materias_disponibles = df_xlsx["materia_normalizada"].dropna().unique().tolist()
+
+        coincidencias = difflib.get_close_matches(materia_csv, materias_disponibles, n=1, cutoff=0.6)
+
+        if coincidencias:
+            materia_detectada = coincidencias[0]
+            similitud = difflib.SequenceMatcher(None, materia_csv, materia_detectada).ratio()
+
+            st.info(f"📌 Materia detectada automáticamente: '{materia_detectada}' (similitud: {similitud:.2f})")
+
+            df_xlsx_filtrado = df_xlsx[df_xlsx["materia_normalizada"] == materia_detectada]
+        else:
+            st.error(f"❌ No se encontró una materia similar a '{materia_csv}' en el XLSX.")
+            sugerencias = difflib.get_close_matches(materia_csv, materias_disponibles, n=5, cutoff=0.3)
+
+            if sugerencias:
+                st.warning("🔎 Posibles materias similares:")
+                for s in sugerencias:
+                    st.write(f"- {s}")
+
+            st.stop()
+
+        # --- NORMALIZAR IDs ---
+        df_csv["SIS Login ID"] = df_csv["SIS Login ID"].astype(str).str.strip().str.replace('.0', '', regex=False)
+        df_xlsx_filtrado["dni"] = df_xlsx_filtrado["dni"].astype(str).str.strip().str.replace('.0', '', regex=False)
+
+        # --- CRUCE ---
         cols_xlsx = ['dni', 'email'] if opcion_base == "Base para Hubspot" else ['dni', 'nombres', 'materia']
-        
-        df_unido = pd.merge(df_csv, df_xlsx[cols_xlsx], left_on="SIS Login ID", right_on="dni", how="inner")
+
+        df_unido = pd.merge(
+            df_csv,
+            df_xlsx_filtrado[cols_xlsx],
+            left_on="SIS Login ID",
+            right_on="dni",
+            how="inner"
+        )
 
         if not df_unido.empty:
             if opcion_base == "Base para Hubspot":
-                # Lógica Original
                 df_final = df_unido[['email']].drop_duplicates()
                 header_bool = True
             else:
-                # Lógica para Whatsapp
-                # 1. Tomar solo el primer nombre
                 df_unido['nombres'] = df_unido['nombres'].astype(str).str.split().str[0]
-                # 2. Seleccionar columnas requeridas
                 df_final = df_unido[['dni', 'nombres', 'materia']].drop_duplicates()
-                # 3. Limpiar caracteres especiales (tildes y ñ)
+
                 for col in ['nombres', 'materia']:
                     df_final[col] = df_final[col].apply(limpiar_texto)
-                header_bool = False # Sin encabezados
+
+                header_bool = False
 
             st.success(f"✅ ¡Éxito! Se encontraron {len(df_final)} alumnos coincidentes.")
-            
-            # --- GENERACIÓN DE EXCEL ---
+
+            # --- EXPORTAR ---
             output = io.BytesIO()
             with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
                 df_final.to_excel(writer, index=False, header=header_bool)
-            
-            st.download_button(label=f"📥 Descargar base {texto_destino}", 
-                               data=output.getvalue(), 
-                               file_name=nombre_salida)
-            
+
+            st.download_button(
+                label=f"📥 Descargar base {texto_destino}",
+                data=output.getvalue(),
+                file_name=nombre_salida
+            )
+
             st.write("Vista previa de los datos:")
             st.dataframe(df_final)
+
         else:
             st.warning("⚠️ No se encontraron coincidencias entre los archivos.")
 
-        # --- BOTÓN DE REINICIO ---
+        # --- REINICIO ---
         st.divider()
         st.write("¿Deseas procesar otra materia?")
         if st.button("➕ Realizar nueva carga", type="primary", on_click=reiniciar_aplicacion):
