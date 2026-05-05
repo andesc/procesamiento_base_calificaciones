@@ -33,7 +33,7 @@ st.markdown("""
     * Asegúrate de incluir los encabezados **dni** y **email**.
 
 3. **Sube los archivos utilizando los botones de la parte inferior 👇. Luego de procesarlos, clic en "Descargar" para obtener la base lista para hubspot**    
-""")**       
+      
 """)
 
 st.divider()
