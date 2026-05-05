@@ -1,80 +1,96 @@
+import streamlit as st
 import pandas as pd
 import io
 import os
-from google.colab import files
 
-def procesar_flujo_nombres_dinamicos():
+# Configuración de la página
+st.set_page_config(page_title="Generador de Emails - Tutoría", page_icon="📧")
+
+st.title("📧 Sincronizador de Alumnos")
+st.markdown("Sube los archivos para obtener la lista de correos de seguimiento.")
+
+# --- ETAPA 1: Carga de archivos desde la interfaz web ---
+col1, col2 = st.columns(2)
+
+with col1:
+    archivo_csv = st.file_uploader("1. Reporte de Calificaciones (CSV)", type=["csv"])
+
+with col2:
+    archivo_xlsx = st.file_uploader("2. Base de Alumnos (XLSX)", type=["xlsx"])
+
+if archivo_csv and archivo_xlsx:
     try:
-        # --- ETAPA 1: Carga y limpieza del PRIMER archivo (CSV) ---
-        print("1. CARGA DEL PRIMER ARCHIVO (CSV):")
-        subida_1 = files.upload()
-        nombre_csv_completo = list(subida_1.keys())[0]
-
-        # --- Lógica para el nombre del archivo de salida ---
-        # Ejemplo: 2026-04-30T1730_Calificaciones-ANÁLISIS_Y_VISUALIZACIÓN_DE_DATOS.csv
+        # --- Lógica de Nombres de Archivo ---
+        nombre_original = archivo_csv.name
+        nombre_sin_ext = os.path.splitext(nombre_original)[0]
+        
+        # Extraer fecha DD-MM y Materia del nombre del CSV
+        # Ejemplo: 2026-04-30... -> 30-04
         try:
-            # 1. Quitamos la extensión .csv
-            nombre_sin_ext = os.path.splitext(nombre_csv_completo)[0]
-
-            # 2. Extraemos la fecha (YYYY-MM-DD) de los primeros 10 caracteres
-            fecha_iso = nombre_sin_ext[:10] # "2026-04-30"
-            partes_fecha = fecha_iso.split('-')
-            fecha_formateada = f"{partes_fecha[2]}-{partes_fecha[1]}" # "30-04"
-
-            # 3. Extraemos el nombre de la materia (después de "Calificaciones-")
+            fecha = f"{nombre_sin_ext[8:10]}-{nombre_sin_ext[5:7]}"
             if "Calificaciones-" in nombre_sin_ext:
                 materia = nombre_sin_ext.split("Calificaciones-")[1]
             else:
-                materia = "Procesado" # Fallback si el nombre no cumple el patrón
-
-            nombre_salida = f"{materia}-{fecha_formateada}.xlsx"
+                materia = "Procesado"
         except:
-            nombre_salida = "lista_emails_final.xlsx" # Fallback general
+            fecha = "SinFecha"
+            materia = "Materia"
+            
+        nombre_salida = f"{materia}-{fecha}.xlsx"
 
-        # Lectura del CSV
-        df_primer_paso = pd.read_csv(io.BytesIO(subida_1[nombre_csv_completo]))
-        df_primer_paso.columns = df_primer_paso.columns.str.strip()
+        # --- Procesamiento de Datos ---
+        # Leemos los archivos directamente desde la memoria de la web
+        df_csv = pd.read_csv(archivo_csv)
+        df_xlsx = pd.read_excel(archivo_xlsx)
 
-        if "SIS Login ID" not in df_primer_paso.columns:
-            print(f"❌ Error: No se encontró 'SIS Login ID'. Columnas: {list(df_primer_paso.columns)}")
-            return
+        # Limpiar encabezados
+        df_csv.columns = df_csv.columns.str.strip()
+        df_xlsx.columns = df_xlsx.columns.str.strip().str.lower()
 
-        # --- ETAPA 2: Carga del SEGUNDO archivo (XLSX) ---
-        print(f"\n2. CARGA DEL SEGUNDO ARCHIVO (Base de alumnos):")
-        subida_2 = files.upload()
-        nombre_xlsx = list(subida_2.keys())[0]
+        # Normalizar DNI / SIS ID para que coincidan (quitando .0 y espacios)
+        df_csv["SIS Login ID"] = (df_csv["SIS Login ID"]
+                                  .astype(str)
+                                  .str.strip()
+                                  .str.replace('.0', '', regex=False))
+        
+        df_xlsx["dni"] = (df_xlsx["dni"]
+                          .astype(str)
+                          .str.strip()
+                          .str.replace('.0', '', regex=False))
 
-        df_segundo = pd.read_excel(io.BytesIO(subida_2[nombre_xlsx]))
-        df_segundo.columns = df_segundo.columns.str.strip().str.lower()
-
-        # --- ETAPA 3: Merge ---
-        df_primer_paso["SIS Login ID"] = (df_primer_paso["SIS Login ID"]
-                                         .astype(str).str.strip().str.replace('.0', '', regex=False))
-        df_segundo["dni"] = (df_segundo["dni"]
-                             .astype(str).str.strip().str.replace('.0', '', regex=False))
-
+        # Merge (Cruce de datos)
         df_unido = pd.merge(
-            df_primer_paso,
-            df_segundo[['dni', 'email']],
-            left_on="SIS Login ID",
-            right_on="dni",
+            df_csv, 
+            df_xlsx[['dni', 'email']], 
+            left_on="SIS Login ID", 
+            right_on="dni", 
             how="inner"
         )
 
-        # --- ETAPA 4: Verificación y Descarga ---
+        # --- RESULTADOS Y DESCARGA ---
         if not df_unido.empty:
-            print(f"\n✓ Se encontraron {len(df_unido)} coincidencias.")
-
             df_final = df_unido[['email']].drop_duplicates()
-
-            print(f"Generando archivo: {nombre_salida}")
-            df_final.to_excel(nombre_salida, index=False)
-            files.download(nombre_salida)
+            
+            st.success(f"✅ ¡Éxito! Se encontraron {len(df_final)} alumnos coincidentes.")
+            
+            # Crear el archivo Excel en memoria para la descarga
+            output = io.BytesIO()
+            with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
+                df_final.to_excel(writer, index=False)
+            
+            st.download_button(
+                label="📥 Descargar Excel de Emails",
+                data=output.getvalue(),
+                file_name=nombre_salida,
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+            )
+            
+            # Vista previa para el usuario
+            st.write("Vista previa de los correos encontrados:")
+            st.dataframe(df_final)
+            
         else:
-            print("\n⚠️ No se encontraron coincidencias entre el SIS Login ID y el DNI.")
+            st.warning("⚠️ No se encontraron coincidencias entre el SIS Login ID y el DNI.")
 
     except Exception as e:
-        print(f"Error: {e}")
-
-if __name__ == "__main__":
-    procesar_flujo_nombres_dinamicos()
+        st.error(f"Hubo un error al procesar los archivos: {e}")
