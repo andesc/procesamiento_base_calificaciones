@@ -115,8 +115,8 @@ if archivo_csv and archivo_xlsx:
     except Exception as e:
         st.error(f"Hubo un error al procesar los archivos: {e}")
        # Justo después del botón de descarga exitosa
-st.balloons() # ¡Un poco de festejo visual por el trabajo terminado!
-st.success("Proceso finalizado con éxito.")
-
-if st.button("➕ Generar nueva base", type="primary"):
-    st.rerun()
+         st.balloons() # ¡Un poco de festejo visual por el trabajo terminado!
+         st.success("Proceso finalizado con éxito.")
+         
+         if st.button("➕ Generar nueva base", type="primary"):
+             st.rerun()
