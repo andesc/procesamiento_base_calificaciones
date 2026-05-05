@@ -4,10 +4,20 @@ import io
 import os
 
 # Configuración de la página
-st.set_page_config(page_title="Generador de Emails - Tutoría", page_icon="📧")
+st.set_page_config(page_title="Procesamiento Base Calificaciones", page_icon="📧")
 
-st.title("📧 Sincronizador de Alumnos")
-st.markdown("Sube los archivos para obtener la lista de correos de seguimiento.")
+st.title("📧 Carga de archivos")
+st.markdown("Sube el csv de calificaciones y luego el excel de invitaciones.")
+st.markdown("Pasos a seguir:
+
+1- Obtener el primer archivo (csv):
+Ingresar a la materia en Canvas, Calificaciones. Aplicar los filtros necesarios (Ejemplo: Módulos / Módulo 3, Grupo de Tareas / Actividades, Estado / Faltante) 
+Exportar / Vista actual. Importante: No modificar el nombre del archivo generado.
+
+2- Obtener segundo archivo (xlsx):
+En base de invitaciones, filtrar la materia objetivo y crear un archivo con esos datos. Podemos guardar el archivo completo con todas las columnas o crear uno nuevo 
+con las columnas dni / email.Si elegimos esta última opción, asegurarnos de copiar las dos columnas de manera completa para que tengan los encabezados dni / email.")
+
 
 # --- ETAPA 1: Carga de archivos desde la interfaz web ---
 col1, col2 = st.columns(2)
