@@ -32,7 +32,7 @@ st.markdown("""
     * En tu **Base de Invitaciones**, filtra la materia objetivo.
     * Asegúrate de incluir los encabezados **dni** y **email**.
 
-3. **Sube los archivos utilizando los botones de la parte inferior 👇. 
+3. **Sube los archivos utilizando los botones de la parte inferior 👇   
 Luego de procesarlos, clic en "Descargar base", para obtener el archivo listo para hubspot.**    
       
 """)
