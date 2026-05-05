@@ -7,18 +7,28 @@ import os
 st.set_page_config(page_title="Procesamiento Base Calificaciones", page_icon="📧")
 
 st.title("📧 Carga de archivos")
-st.markdown("Sube el csv de calificaciones y luego el excel de invitaciones.")
-st.markdown("Pasos a seguir:
+st.title("📧 Sincronizador de Alumnos")
 
-1- Obtener el primer archivo (csv):
-Ingresar a la materia en Canvas, Calificaciones. Aplicar los filtros necesarios (Ejemplo: Módulos / Módulo 3, Grupo de Tareas / Actividades, Estado / Faltante) 
-Exportar / Vista actual. Importante: No modificar el nombre del archivo generado.
+# Instrucciones con formato mejorado
+st.markdown("### 📥 Carga de archivos")
+st.info("Sube el **CSV de calificaciones** y luego el **Excel de invitaciones**.")
 
-2- Obtener segundo archivo (xlsx):
-En base de invitaciones, filtrar la materia objetivo y crear un archivo con esos datos. Podemos guardar el archivo completo con todas las columnas o crear uno nuevo 
-con las columnas dni / email.Si elegimos esta última opción, asegurarnos de copiar las dos columnas de manera completa para que tengan los encabezados dni / email.")
+st.markdown("""
+**Pasos a seguir:**
 
+1. **Obtener el primer archivo (CSV):**
+    * Ingresa a la materia en **Canvas** > **Calificaciones**. 
+    * Aplica los filtros necesarios (Ejemplo: *Módulos / Módulo 3*, *Grupo de Tareas / Actividades*, *Estado / Faltante*). 
+    * Selecciona **Exportar** > **Vista actual**. 
+    * ⚠️ **Importante:** No modifiques el nombre del archivo generado para que el sistema pueda extraer la fecha y materia automáticamente.
 
+2. **Obtener el segundo archivo (XLSX):**
+    * En tu **Base de Invitaciones**, filtra la materia objetivo.
+    * Puedes usar el archivo completo o crear uno nuevo que contenga, al menos, las columnas **dni** y **email**.
+    * Si creas un archivo nuevo, asegúrate de incluir los encabezados correctamente.
+""")
+
+st.divider() # Línea divisoria visual
 # --- ETAPA 1: Carga de archivos desde la interfaz web ---
 col1, col2 = st.columns(2)
 
