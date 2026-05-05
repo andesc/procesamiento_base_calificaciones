@@ -6,12 +6,10 @@ import os
 # Configuración de la página
 st.set_page_config(page_title="Procesamiento Base Calificaciones", page_icon="📧")
 
-st.title("📧 Carga de archivos")
-st.title("📧 Sincronizador de Alumnos")
 
 # Instrucciones con formato mejorado
 st.markdown("### 📥 Carga de archivos")
-st.info("Sube el **CSV de calificaciones** y luego el **Excel de invitaciones**.")
+st.markdown("Sube el **CSV de calificaciones** y luego el **Excel de invitaciones**.")
 
 st.markdown("""
 **Pasos a seguir:**
