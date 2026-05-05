@@ -32,7 +32,8 @@ st.markdown("""
     * En tu **Base de Invitaciones**, filtra la materia objetivo.
     * Asegúrate de incluir los encabezados **dni** y **email**.
 
-3. **Sube los archivos utilizando los botones de la parte inferior 👇. Luego de procesarlos, clic en "Descargar" para obtener la base lista para hubspot**    
+3. **Sube los archivos utilizando los botones de la parte inferior 👇. 
+Luego de procesarlos, clic en "Descargar base", para obtener el archivo listo para hubspot.**    
       
 """)
 
@@ -87,7 +88,7 @@ if archivo_csv and archivo_xlsx:
             with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
                 df_final.to_excel(writer, index=False)
             
-            st.download_button(label="📥 Descargar Excel de Emails", data=output.getvalue(), file_name=nombre_salida)
+            st.download_button(label="📥 Descargar base", data=output.getvalue(), file_name=nombre_salida)
             st.write("Vista previa:")
             st.dataframe(df_final)
         else:
