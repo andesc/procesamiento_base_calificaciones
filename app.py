@@ -43,9 +43,19 @@ st.markdown(f"Sube los archivos para generar la base de **{texto_destino}**.")
 
 st.markdown("""
 **Pasos a seguir:**
-1. **Archivo CSV (Canvas):** Exportar 'Vista actual' desde Calificaciones. No cambies el nombre.
-2. **Archivo XLSX (Base):** Asegúrate de que tenga las columnas necesarias.
-3. **Procesamiento:** Sube los archivos 👇 y luego haz clic en descargar.
+1. **Obtener el primer archivo (CSV):**
+    * Ingresa a la materia en **Canvas** > **Calificaciones**. 
+    * Aplica los filtros necesarios. 
+    * Selecciona **Exportar** > **Vista actual**. 
+    * ⚠️ **Importante:** No modifiques el nombre del archivo generado.
+
+2. **Obtener el segundo archivo (XLSX):**
+    * En tu **Base de Invitaciones**, filtra la materia objetivo.
+    * Asegúrate de incluir los encabezados **dni** y **email**.
+
+3. **Sube los archivos utilizando los botones de la parte inferior 👇   
+Luego de procesarlos, clic en "Descargar base", para obtener el archivo listo para hubspot.**    
+      
 """)
 
 st.divider()
