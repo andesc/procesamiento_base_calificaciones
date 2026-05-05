@@ -118,5 +118,5 @@ if archivo_csv and archivo_xlsx:
 st.balloons() # ¡Un poco de festejo visual por el trabajo terminado!
 st.success("Proceso finalizado con éxito.")
 
-if st.button("➕ Cargar otra materia", type="primary"):
+if st.button("➕ Generar nueva base", type="primary"):
     st.rerun()
