@@ -24,6 +24,8 @@ st.markdown("""
     * En tu **Base de Invitaciones**, filtra la materia objetivo.
     * Puedes usar el archivo completo o crear uno nuevo que contenga, al menos, las columnas **dni** y **email**.
     * Si creas un archivo nuevo, asegúrate de incluir los encabezados correctamente.
+
+3. **Sube los archivos utilizando los botones de la parte inferior 👇. Luego de procesarlos, clic en "Descargar" para obtener la base lista para hubspot**    
 """)
 
 st.divider() # Línea divisoria visual
