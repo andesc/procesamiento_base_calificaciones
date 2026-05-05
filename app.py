@@ -51,10 +51,11 @@ st.markdown("""
 
 2. **Obtener el segundo archivo (XLSX):**
     * En tu **Base de Invitaciones**, filtra la materia objetivo.
-    * Asegúrate de incluir los encabezados **dni** y **email**.
+    * Asegúrate de incluir los encabezados **dni**, **email** y **materia**.
+    
 
 3. **Sube los archivos utilizando los botones de la parte inferior 👇   
-Luego de procesarlos, clic en "Descargar base", para obtener el archivo listo para hubspot.**    
+Luego de procesarlos, clic en "Descargar base", para obtener el archivo listo.**    
       
 """)
 
