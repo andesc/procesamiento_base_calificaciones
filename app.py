@@ -6,7 +6,17 @@ import os
 # Configuración de la página
 st.set_page_config(page_title="Procesamiento Base Calificaciones", page_icon="📧")
 
-# Instrucciones con formato mejorado (Tu base actualizada)
+# --- NUEVA LÓGICA DE LIMPIEZA ---
+# Si no existe un 'contador' en la sesión, lo creamos. 
+# Cambiar este número reseteará los componentes de carga.
+if 'count' not in st.session_state:
+    st.session_state.count = 0
+
+def reiniciar_aplicacion():
+    st.session_state.count += 1  # Cambiamos la clave de los widgets
+    st.rerun()
+
+# Instrucciones
 st.markdown("### 📥 Carga de archivos")
 st.markdown("Sube el **CSV de calificaciones** y luego el **Excel de invitaciones**.")
 
@@ -15,106 +25,80 @@ st.markdown("""
 
 1. **Obtener el primer archivo (CSV):**
     * Ingresa a la materia en **Canvas** > **Calificaciones**. 
-    * Aplica los filtros necesarios (Ejemplo: *Módulos / Módulo 3*, *Grupo de Tareas / Actividades*, *Estado / Faltante*). 
+    * Aplica los filtros necesarios. 
     * Selecciona **Exportar** > **Vista actual**. 
-    * ⚠️ **Importante:** No modifiques el nombre del archivo generado para que el sistema pueda extraer la fecha y materia automáticamente.
+    * ⚠️ **Importante:** No modifiques el nombre del archivo generado.
 
 2. **Obtener el segundo archivo (XLSX):**
     * En tu **Base de Invitaciones**, filtra la materia objetivo.
-    * Puedes usar el archivo completo o crear uno nuevo que contenga, al menos, las columnas **dni** y **email**.
-    * Si creas un archivo nuevo, asegúrate de incluir los encabezados correctamente.
+    * Asegúrate de incluir los encabezados **dni** y **email**.
 
-3. **Sube los archivos utilizando los botones de la parte inferior 👇. Luego de procesarlos, clic en "Descargar" para obtener la base lista para hubspot**       
+3. **Sube los archivos utilizando los botones de la parte inferior 👇.**       
 """)
 
-st.divider() # Línea divisoria visual
+st.divider()
 
-# --- ETAPA 1: Carga de archivos desde la interfaz web ---
+# --- ETAPA 1: Carga de archivos con KEY DINÁMICA ---
 col1, col2 = st.columns(2)
 
 with col1:
-    archivo_csv = st.file_uploader("1. Reporte de Calificaciones (CSV)", type=["csv"])
+    # Agregamos la clave dinámica basada en el contador
+    archivo_csv = st.file_uploader("1. Reporte de Calificaciones (CSV)", 
+                                   type=["csv"], 
+                                   key=f"csv_{st.session_state.count}")
 
 with col2:
-    archivo_xlsx = st.file_uploader("2. Base de Alumnos (XLSX)", type=["xlsx"])
+    archivo_xlsx = st.file_uploader("2. Base de Alumnos (XLSX)", 
+                                    type=["xlsx"], 
+                                    key=f"xlsx_{st.session_state.count}")
 
 if archivo_csv and archivo_xlsx:
     try:
-        # --- Lógica de Nombres de Archivo ---
+        # --- Lógica de Nombres ---
         nombre_original = archivo_csv.name
         nombre_sin_ext = os.path.splitext(nombre_original)[0]
         
-        # Extraer fecha DD-MM y Materia del nombre del CSV
         try:
             fecha = f"{nombre_sin_ext[8:10]}-{nombre_sin_ext[5:7]}"
-            if "Calificaciones-" in nombre_sin_ext:
-                materia = nombre_sin_ext.split("Calificaciones-")[1]
-            else:
-                materia = "Procesado"
+            materia = nombre_sin_ext.split("Calificaciones-")[1] if "Calificaciones-" in nombre_sin_ext else "Procesado"
         except:
-            fecha = "SinFecha"
-            materia = "Materia"
+            fecha, materia = "SinFecha", "Materia"
             
         nombre_salida = f"{materia}-{fecha}.xlsx"
 
-        # --- Procesamiento de Datos ---
+        # --- Procesamiento ---
         df_csv = pd.read_csv(archivo_csv)
         df_xlsx = pd.read_excel(archivo_xlsx)
 
-        # Limpiar encabezados
         df_csv.columns = df_csv.columns.str.strip()
         df_xlsx.columns = df_xlsx.columns.str.strip().str.lower()
 
-        # Normalizar DNI / SIS ID para que coincidan
-        df_csv["SIS Login ID"] = (df_csv["SIS Login ID"]
-                                  .astype(str)
-                                  .str.strip()
-                                  .str.replace('.0', '', regex=False))
-        
-        df_xlsx["dni"] = (df_xlsx["dni"]
-                          .astype(str)
-                          .str.strip()
-                          .str.replace('.0', '', regex=False))
+        df_csv["SIS Login ID"] = (df_csv["SIS Login ID"].astype(str).str.strip().str.replace('.0', '', regex=False))
+        df_xlsx["dni"] = (df_xlsx["dni"].astype(str).str.strip().str.replace('.0', '', regex=False))
 
-        # Merge (Cruce de datos)
-        df_unido = pd.merge(
-            df_csv, 
-            df_xlsx[['dni', 'email']], 
-            left_on="SIS Login ID", 
-            right_on="dni", 
-            how="inner"
-        )
+        df_unido = pd.merge(df_csv, df_xlsx[['dni', 'email']], left_on="SIS Login ID", right_on="dni", how="inner")
 
-        # --- RESULTADOS Y DESCARGA ---
+        # --- RESULTADOS ---
         if not df_unido.empty:
             df_final = df_unido[['email']].drop_duplicates()
-            
             st.success(f"✅ ¡Éxito! Se encontraron {len(df_final)} alumnos coincidentes.")
             
-            # Crear el archivo Excel en memoria para la descarga
             output = io.BytesIO()
             with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
                 df_final.to_excel(writer, index=False)
             
-            st.download_button(
-                label="📥 Descargar Excel de Emails",
-                data=output.getvalue(),
-                file_name=nombre_salida,
-                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-            )
-            
-            # Vista previa para el usuario
-            st.write("Vista previa de los correos encontrados:")
+            st.download_button(label="📥 Descargar Excel de Emails", data=output.getvalue(), file_name=nombre_salida)
+            st.write("Vista previa:")
             st.dataframe(df_final)
-            
         else:
-            st.warning("⚠️ No se encontraron coincidencias entre el SIS Login ID y el DNI.")
+            st.warning("⚠️ No se encontraron coincidencias.")
 
-        # --- NUEVA CARGA (Reinicio) ---
+        # --- BOTÓN DE REINICIO MEJORADO ---
         st.divider()
         st.write("¿Deseas procesar otra materia?")
-        if st.button("➕ Realizar nueva carga", type="primary"):
-            st.rerun()
+        # Al hacer clic, llamamos a la función que aumenta el contador y refresca
+        if st.button("➕ Realizar nueva carga", type="primary", on_click=reiniciar_aplicacion):
+            pass 
 
     except Exception as e:
-        st.error(f"Hubo un error al procesar los archivos: {e}")
+        st.error(f"Error: {e}")
