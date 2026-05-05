@@ -13,8 +13,7 @@ if 'count' not in st.session_state:
     st.session_state.count = 0
 
 def reiniciar_aplicacion():
-    st.session_state.count += 1  # Cambiamos la clave de los widgets
-    st.rerun()
+    st.session_state.count += 1
 
 # Instrucciones
 st.markdown("### 📥 Carga de archivos")
@@ -96,9 +95,10 @@ if archivo_csv and archivo_xlsx:
         # --- BOTÓN DE REINICIO MEJORADO ---
         st.divider()
         st.write("¿Deseas procesar otra materia?")
-        # Al hacer clic, llamamos a la función que aumenta el contador y refresca
+        
+        # Al hacer clic, Streamlit ejecuta la función y recarga automáticamente
         if st.button("➕ Realizar nueva carga", type="primary", on_click=reiniciar_aplicacion):
-            pass 
+            pass
 
     except Exception as e:
         st.error(f"Error: {e}")
