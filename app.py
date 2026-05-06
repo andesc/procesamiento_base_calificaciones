@@ -92,6 +92,7 @@ if archivo_csv and (archivo_xlsx is not None or opcion_base == "Base para Whatsa
         suffix = "HUB" if opcion_base == "Base para Hubspot" else "WSP"
         nombre_base = f"{materia_nom}-{fecha}-{suffix}"
 
+        archivo_csv.seek(0)
         df_csv = pd.read_csv(archivo_csv)
         df_csv.columns = df_csv.columns.str.strip()
 
