@@ -129,7 +129,17 @@ if archivo_csv and (archivo_xlsx is not None or opcion_base == "Base para Whatsa
             materia = limpiar_texto(materia.replace("_", " "))
 
             # Procesar columnas
-            df_csv["dni"] = df_csv["SIS Login ID"].astype(str).str.strip()
+            # Buscar columna de DNI dinámicamente
+            col_dni = [col for col in df_csv.columns if "sis" in col.lower() and "login" in col.lower()]
+            
+            if not col_dni:
+                st.error("❌ No se encontró la columna 'SIS Login ID'")
+                st.write("Columnas detectadas:", df_csv.columns.tolist())
+                st.stop()
+            
+            col_dni = col_dni[0]
+            
+            df_csv["dni"] = df_csv[col_dni].astype(str).str.strip()
             df_csv["nombres"] = df_csv["Student"].apply(obtener_primer_nombre)
 
             df_final = df_csv[["dni", "nombres"]].drop_duplicates()
