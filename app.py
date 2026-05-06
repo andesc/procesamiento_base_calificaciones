@@ -12,7 +12,6 @@ def reiniciar_aplicacion():
     st.session_state.count += 1
 
 def limpiar_texto(texto):
-    """Elimina tildes, convierte Ñ en ni y normaliza texto."""
     if not isinstance(texto, str):
         return str(texto)
     texto = texto.replace('ñ', 'ni').replace('Ñ', 'Ni')
@@ -22,168 +21,156 @@ def limpiar_texto(texto):
     )
     return texto.translate(trans_tab)
 
-# --- INICIALIZACIÓN DE ESTADO ---
+# --- INICIALIZACIÓN ---
 if 'count' not in st.session_state:
     st.session_state.count = 0
 
-# --- INTERFAZ INICIAL ---
+# --- INTERFAZ ---
 st.title("🛠️ Generador de bases")
+
 opcion_base = st.radio(
     "Selecciona el tipo de base que deseas generar:",
-    ["Base para Hubspot", "Base para Whatsapp"],
-    help="Hubspot genera solo emails. Whatsapp genera DNI, Nombre y Materia sin encabezados."
+    ["Base para Hubspot", "Base para Whatsapp"]
 )
 
 st.divider()
 
-# Instrucciones dinámicas según la opción
-st.markdown("### 📥 Carga de archivos")
 texto_destino = "Hubspot" if opcion_base == "Base para Hubspot" else "Whatsapp"
-st.markdown(f"Sube los archivos para generar la base de **{texto_destino}**.")
 
-st.markdown("""
-**Pasos a seguir:**
+st.markdown("### 📥 Carga de archivos")
+
+# --- INSTRUCCIONES ---
+if opcion_base == "Base para Whatsapp":
+    st.markdown("""
 1. **Obtener el primer archivo (CSV):**
     * Ingresa a la materia en **Canvas** > **Calificaciones**. 
     * Aplica los filtros necesarios. 
     * Selecciona **Exportar** > **Vista actual**. 
     * ⚠️ **Importante:** No modifiques el nombre del archivo generado.
 
-2. **Obtener el segundo archivo (XLSX):**
-    * En tu **Base de Invitaciones**, filtra la materia objetivo.
-    * Asegúrate de incluir los encabezados **dni** y **email**.
-
-3. **Sube los archivos utilizando los botones de la parte inferior 👇   
-Luego de procesarlos, clic en "Descargar base", para obtener el archivo listo para hubspot.**    
-      
+2. **Sube el archivo utilizando el botón de la parte inferior 👇    
+Luego de procesarlo, clic en "Descargar base" (si son varios, clic en cada uno)**
+""")
+else:
+    st.markdown("""
+**Pasos a seguir:**
+1. Subir CSV de Canvas
+2. Subir Excel de base de alumnos
+3. Descargar resultado
 """)
 
 st.divider()
 
 # --- CARGA DE ARCHIVOS ---
-col1, col2 = st.columns(2)
+archivo_csv = st.file_uploader(
+    "1. Reporte de Calificaciones (CSV)", 
+    type=["csv"], 
+    key=f"csv_{st.session_state.count}"
+)
 
-with col1:
-    archivo_csv = st.file_uploader("1. Reporte de Calificaciones (CSV)", 
-                                   type=["csv"], 
-                                   key=f"csv_{st.session_state.count}")
+archivo_xlsx = None
 
-with col2:
-    archivo_xlsx = st.file_uploader("2. Base de Alumnos (XLSX)", 
-                                    type=["xlsx"], 
-                                    key=f"xlsx_{st.session_state.count}")
+if opcion_base == "Base para Hubspot":
+    archivo_xlsx = st.file_uploader(
+        "2. Base de Alumnos (XLSX)", 
+        type=["xlsx"], 
+        key=f"xlsx_{st.session_state.count}"
+    )
 
-if archivo_csv and archivo_xlsx:
+# --- PROCESAMIENTO ---
+if archivo_csv and (archivo_xlsx is not None or opcion_base == "Base para Whatsapp"):
     try:
-        # --- Lógica de Nombres de Salida ---
         nombre_original = archivo_csv.name
         nombre_sin_ext = os.path.splitext(nombre_original)[0]
+
         try:
             fecha = f"{nombre_sin_ext[8:10]}-{nombre_sin_ext[5:7]}"
-            materia_nom = nombre_sin_ext.split("Calificaciones-")[1] if "Calificaciones-" in nombre_sin_ext else "Procesado"
+            materia_nom = nombre_sin_ext.split("Calificaciones-")[1]
         except:
             fecha, materia_nom = "SinFecha", "Materia"
-        
+
         suffix = "HUB" if opcion_base == "Base para Hubspot" else "WSP"
         nombre_base = f"{materia_nom}-{fecha}-{suffix}"
 
-        # --- LECTURA ---
         df_csv = pd.read_csv(archivo_csv)
-        df_xlsx = pd.read_excel(archivo_xlsx)
-
         df_csv.columns = df_csv.columns.str.strip()
-        df_xlsx.columns = df_xlsx.columns.str.strip().str.lower()
 
-        # --- NORMALIZAR IDS ---
-        df_csv["SIS Login ID"] = df_csv["SIS Login ID"].astype(str).str.strip().str.replace('.0', '', regex=False)
-        df_xlsx["dni"] = df_xlsx["dni"].astype(str).str.strip().str.replace('.0', '', regex=False)
+        # --- HUBSPOT ---
+        if opcion_base == "Base para Hubspot":
+            df_xlsx = pd.read_excel(archivo_xlsx)
+            df_xlsx.columns = df_xlsx.columns.str.strip().str.lower()
 
-        # --- FILTRO DE MATERIA SOLO PARA WHATSAPP ---
-        if opcion_base == "Base para Whatsapp":
-            materia_csv = ""
-            if "Calificaciones-" in nombre_sin_ext:
-                materia_csv = nombre_sin_ext.split("Calificaciones-")[1]
+            df_csv["SIS Login ID"] = df_csv["SIS Login ID"].astype(str).str.strip().str.replace('.0', '', regex=False)
+            df_xlsx["dni"] = df_xlsx["dni"].astype(str).str.strip().str.replace('.0', '', regex=False)
 
-            materia_csv = materia_csv.replace("_", " ")
-            materia_csv = limpiar_texto(materia_csv).lower().strip()
-
-            df_xlsx["materia_normalizada"] = df_xlsx["materia"].apply(
-                lambda x: limpiar_texto(str(x)).lower().strip()
+            df_unido = pd.merge(
+                df_csv,
+                df_xlsx[['dni', 'email']],
+                left_on="SIS Login ID",
+                right_on="dni",
+                how="inner"
             )
 
-            df_xlsx = df_xlsx[df_xlsx["materia_normalizada"] == materia_csv]
+            df_final = df_unido[['email']].drop_duplicates()
 
-        # --- CRUCE DE DATOS ---
-        cols_xlsx = ['dni', 'email'] if opcion_base == "Base para Hubspot" else ['dni', 'nombres', 'materia']
-        
-        df_unido = pd.merge(
-            df_csv,
-            df_xlsx[cols_xlsx],
-            left_on="SIS Login ID",
-            right_on="dni",
-            how="inner"
-        )
+            output = io.BytesIO()
+            with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
+                df_final.to_excel(writer, index=False, header=True)
 
-        if not df_unido.empty:
-            if opcion_base == "Base para Hubspot":
-                df_final = df_unido[['email']].drop_duplicates()
-                header_bool = True
+            st.download_button(
+                label="📥 Descargar base Hubspot",
+                data=output.getvalue(),
+                file_name=f"{nombre_base}.xlsx"
+            )
 
-                # Exportación única
+        # --- WHATSAPP ---
+        else:
+            # Extraer materia desde nombre
+            materia_csv = nombre_sin_ext.split("Calificaciones-")[1]
+            materia_csv = limpiar_texto(materia_csv.replace("_", " "))
+
+            # Generar base solo con CSV
+            df_csv["SIS Login ID"] = df_csv["SIS Login ID"].astype(str).str.strip()
+            df_csv["nombres"] = df_csv["Student"].astype(str).str.split().str[0]
+
+            df_final = df_csv[["SIS Login ID", "nombres"]].drop_duplicates()
+            df_final["materia"] = materia_csv
+
+            df_final.columns = ["dni", "nombres", "materia"]
+
+            for col in ['nombres', 'materia']:
+                df_final[col] = df_final[col].apply(limpiar_texto)
+
+            # --- DIVISIÓN EN BLOQUES ---
+            chunk_size = 100
+            total = len(df_final)
+
+            st.success(f"✅ Se generaron {total} registros")
+
+            for i in range(0, total, chunk_size):
+                chunk = df_final.iloc[i:i + chunk_size]
+
                 output = io.BytesIO()
                 with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
-                    df_final.to_excel(writer, index=False, header=header_bool)
+                    chunk.to_excel(writer, index=False, header=False)
+
+                parte = (i // chunk_size) + 1
+                sufijo = f"_{parte}" if parte > 1 else ""
+
+                nombre_archivo = f"{nombre_base}{sufijo}.xlsx"
 
                 st.download_button(
-                    label=f"📥 Descargar base {texto_destino}",
+                    label=f"📥 Descargar {nombre_archivo}",
                     data=output.getvalue(),
-                    file_name=f"{nombre_base}.xlsx"
+                    file_name=nombre_archivo
                 )
 
-            else:
-                # --- WHATSAPP ---
-                df_unido['nombres'] = df_unido['nombres'].astype(str).str.split().str[0]
-                df_final = df_unido[['dni', 'nombres', 'materia']].drop_duplicates()
+        st.write("Vista previa:")
+        st.dataframe(df_final)
 
-                for col in ['nombres', 'materia']:
-                    df_final[col] = df_final[col].apply(limpiar_texto)
-
-                header_bool = False
-
-                # --- DIVISIÓN EN BLOQUES DE 100 ---
-                chunk_size = 100
-                total_filas = len(df_final)
-
-                st.success(f"✅ ¡Éxito! Se encontraron {total_filas} alumnos coincidentes.")
-
-                for i in range(0, total_filas, chunk_size):
-                    chunk = df_final.iloc[i:i + chunk_size]
-
-                    output = io.BytesIO()
-                    with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
-                        chunk.to_excel(writer, index=False, header=header_bool)
-
-                    parte = (i // chunk_size) + 1
-                    sufijo = f"_{parte}" if parte > 1 else ""
-                    nombre_archivo = f"{nombre_base}{sufijo}.xlsx"
-
-                    st.download_button(
-                        label=f"📥 Descargar {nombre_archivo}",
-                        data=output.getvalue(),
-                        file_name=nombre_archivo
-                    )
-
-            st.write("Vista previa de los datos:")
-            st.dataframe(df_final)
-
-        else:
-            st.warning("⚠️ No se encontraron coincidencias entre los archivos.")
-
-        # --- REINICIO ---
         st.divider()
-        st.write("¿Deseas procesar otra materia?")
-        if st.button("➕ Realizar nueva carga", type="primary", on_click=reiniciar_aplicacion):
+        if st.button("➕ Nueva carga", on_click=reiniciar_aplicacion):
             pass
 
     except Exception as e:
-        st.error(f"Error en el procesamiento: {e}")
+        st.error(f"Error: {e}")
