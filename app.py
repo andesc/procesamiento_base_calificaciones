@@ -130,7 +130,10 @@ if archivo_csv and (archivo_xlsx is not None or opcion_base == "Base para Whatsa
 
             # Procesar columnas
             # Buscar columna de DNI dinámicamente
-            col_dni = [col for col in df_csv.columns if "sis" in col.lower() and "login" in col.lower()]
+                       col_dni = [
+                col for col in df_csv.columns
+                if isinstance(col, str) and "sis" in col.lower() and "login" in col.lower()
+            ]
             
             if not col_dni:
                 st.error("❌ No se encontró la columna 'SIS Login ID'")
