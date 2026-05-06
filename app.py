@@ -141,32 +141,86 @@ if archivo_csv and archivo_xlsx:
                 )
 
             else:
-                # --- WHATSAPP ---
-                df_unido['nombres'] = df_unido['nombres'].astype(str).str.split().str[0]
-                df_final = df_unido[['dni', 'nombres', 'materia']].drop_duplicates()
-
-                for col in ['nombres', 'materia']:
+                # =========================
+                # WHATSAPP
+                # =========================
+            
+                # Leer CSV
+                df_csv = pd.read_csv(archivo_csv)
+            
+                # Eliminar segunda fila ("Points Possible")
+                df_csv = df_csv.drop(index=0).reset_index(drop=True)
+            
+                # Limpiar nombres columnas
+                df_csv.columns = df_csv.columns.str.strip()
+            
+                # Extraer materia desde nombre archivo
+                materia = nombre_sin_ext.split("Calificaciones-")[1]
+                materia = materia.replace("_", " ")
+                materia = limpiar_texto(materia)
+            
+                # Función para obtener primer nombre
+                def obtener_primer_nombre(texto):
+                    if pd.isna(texto):
+                        return ""
+            
+                    texto = str(texto)
+            
+                    # Tomar parte después de la coma
+                    if "," in texto:
+                        nombre = texto.split(",")[1].strip()
+                    else:
+                        nombre = texto.strip()
+            
+                    # Tomar solo primer nombre
+                    return nombre.split()[0]
+            
+                # Crear dataframe final
+                df_final = pd.DataFrame()
+            
+                df_final["dni"] = (
+                    df_csv["SIS Login ID"]
+                    .astype(str)
+                    .str.replace(".0", "", regex=False)
+                    .str.strip()
+                )
+            
+                df_final["nombres"] = df_csv["Student"].apply(obtener_primer_nombre)
+            
+                df_final["materia"] = materia
+            
+                # Limpiar caracteres especiales
+                for col in ["nombres", "materia"]:
                     df_final[col] = df_final[col].apply(limpiar_texto)
-
-                header_bool = False
-
-                # --- DIVISIÓN EN BLOQUES DE 100 ---
+            
+                # Eliminar duplicados
+                df_final = df_final.drop_duplicates()
+            
+                # División en bloques
                 chunk_size = 100
                 total_filas = len(df_final)
-
-                st.success(f"✅ ¡Éxito! Se encontraron {total_filas} alumnos coincidentes.")
-
+            
+                st.success(f"✅ ¡Éxito! Se encontraron {total_filas} alumnos.")
+            
                 for i in range(0, total_filas, chunk_size):
+            
                     chunk = df_final.iloc[i:i + chunk_size]
-
+            
                     output = io.BytesIO()
+            
                     with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
-                        chunk.to_excel(writer, index=False, header=header_bool)
-
+                        chunk.to_excel(
+                            writer,
+                            index=False,
+                            header=False
+                        )
+            
                     parte = (i // chunk_size) + 1
+            
                     sufijo = f"_{parte}" if parte > 1 else ""
+            
                     nombre_archivo = f"{nombre_base}{sufijo}.xlsx"
-
+            
                     st.download_button(
                         label=f"📥 Descargar {nombre_archivo}",
                         data=output.getvalue(),
