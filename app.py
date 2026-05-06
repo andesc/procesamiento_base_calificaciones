@@ -43,20 +43,9 @@ st.markdown(f"Sube los archivos para generar la base de **{texto_destino}**.")
 
 st.markdown("""
 **Pasos a seguir:**
-1. **Obtener el primer archivo (CSV):**
-    * Ingresa a la materia en **Canvas** > **Calificaciones**. 
-    * Aplica los filtros necesarios. 
-    * Selecciona **Exportar** > **Vista actual**. 
-    * ⚠️ **Importante:** No modifiques el nombre del archivo generado.
-
-2. **Obtener el segundo archivo (XLSX):**
-    * En tu **Base de Invitaciones**, filtra la materia objetivo.
-    * Asegúrate de incluir los encabezados **dni**, **email** y **materia**.
-    
-
-3. **Sube los archivos utilizando los botones de la parte inferior 👇   
-Luego de procesarlos, clic en "Descargar base", para obtener el archivo listo.**    
-      
+1. **Archivo CSV (Canvas):** Exportar 'Vista actual' desde Calificaciones. No cambies el nombre.
+2. **Archivo XLSX (Base):** Asegúrate de que tenga las columnas necesarias.
+3. **Procesamiento:** Sube los archivos 👇 y luego haz clic en descargar.
 """)
 
 st.divider()
@@ -86,7 +75,7 @@ if archivo_csv and archivo_xlsx:
             fecha, materia_nom = "SinFecha", "Materia"
         
         suffix = "HUB" if opcion_base == "Base para Hubspot" else "WSP"
-        nombre_salida = f"{materia_nom}-{fecha}-{suffix}.xlsx"
+        nombre_base = f"{materia_nom}-{fecha}-{suffix}"
 
         # --- LECTURA ---
         df_csv = pd.read_csv(archivo_csv)
@@ -101,21 +90,17 @@ if archivo_csv and archivo_xlsx:
 
         # --- FILTRO DE MATERIA SOLO PARA WHATSAPP ---
         if opcion_base == "Base para Whatsapp":
-            # Extraer materia del nombre del CSV
             materia_csv = ""
             if "Calificaciones-" in nombre_sin_ext:
                 materia_csv = nombre_sin_ext.split("Calificaciones-")[1]
 
-            # Normalizar materia del CSV
             materia_csv = materia_csv.replace("_", " ")
             materia_csv = limpiar_texto(materia_csv).lower().strip()
 
-            # Normalizar materia en XLSX
             df_xlsx["materia_normalizada"] = df_xlsx["materia"].apply(
                 lambda x: limpiar_texto(str(x)).lower().strip()
             )
 
-            # Filtrar SOLO esa materia
             df_xlsx = df_xlsx[df_xlsx["materia_normalizada"] == materia_csv]
 
         # --- CRUCE DE DATOS ---
@@ -133,7 +118,20 @@ if archivo_csv and archivo_xlsx:
             if opcion_base == "Base para Hubspot":
                 df_final = df_unido[['email']].drop_duplicates()
                 header_bool = True
+
+                # Exportación única
+                output = io.BytesIO()
+                with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
+                    df_final.to_excel(writer, index=False, header=header_bool)
+
+                st.download_button(
+                    label=f"📥 Descargar base {texto_destino}",
+                    data=output.getvalue(),
+                    file_name=f"{nombre_base}.xlsx"
+                )
+
             else:
+                # --- WHATSAPP ---
                 df_unido['nombres'] = df_unido['nombres'].astype(str).str.split().str[0]
                 df_final = df_unido[['dni', 'nombres', 'materia']].drop_duplicates()
 
@@ -142,26 +140,36 @@ if archivo_csv and archivo_xlsx:
 
                 header_bool = False
 
-            st.success(f"✅ ¡Éxito! Se encontraron {len(df_final)} alumnos coincidentes.")
-            
-            # --- GENERACIÓN DE EXCEL ---
-            output = io.BytesIO()
-            with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
-                df_final.to_excel(writer, index=False, header=header_bool)
-            
-            st.download_button(
-                label=f"📥 Descargar base {texto_destino}", 
-                data=output.getvalue(), 
-                file_name=nombre_salida
-            )
-            
+                # --- DIVISIÓN EN BLOQUES DE 100 ---
+                chunk_size = 100
+                total_filas = len(df_final)
+
+                st.success(f"✅ ¡Éxito! Se encontraron {total_filas} alumnos coincidentes.")
+
+                for i in range(0, total_filas, chunk_size):
+                    chunk = df_final.iloc[i:i + chunk_size]
+
+                    output = io.BytesIO()
+                    with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
+                        chunk.to_excel(writer, index=False, header=header_bool)
+
+                    parte = (i // chunk_size) + 1
+                    sufijo = f"_{parte}" if parte > 1 else ""
+                    nombre_archivo = f"{nombre_base}{sufijo}.xlsx"
+
+                    st.download_button(
+                        label=f"📥 Descargar {nombre_archivo}",
+                        data=output.getvalue(),
+                        file_name=nombre_archivo
+                    )
+
             st.write("Vista previa de los datos:")
             st.dataframe(df_final)
 
         else:
             st.warning("⚠️ No se encontraron coincidencias entre los archivos.")
 
-        # --- BOTÓN DE REINICIO ---
+        # --- REINICIO ---
         st.divider()
         st.write("¿Deseas procesar otra materia?")
         if st.button("➕ Realizar nueva carga", type="primary", on_click=reiniciar_aplicacion):
