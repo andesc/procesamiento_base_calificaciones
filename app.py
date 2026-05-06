@@ -124,80 +124,80 @@ if archivo_csv and (archivo_xlsx is not None or opcion_base == "Base para Whatsa
             )
 
        # --- WHATSAPP ---
-    else:
-        # --- LIMPIEZA CSV (Canvas) ---
-        df_csv = pd.read_csv(archivo_csv)
-    
-        # Eliminar segunda fila (índice 1)
-        df_csv = df_csv.drop(index=1).reset_index(drop=True)
-    
-        # Reasignar correctamente encabezados
-        df_csv.columns = df_csv.iloc[0]
-        df_csv = df_csv[1:].reset_index(drop=True)
-    
-        # Normalizar columnas
-        df_csv.columns = df_csv.columns.astype(str).str.strip()
-    
-        # --- EXTRAER MATERIA DESDE NOMBRE ---
-        materia_csv = nombre_sin_ext.split("Calificaciones-")[1]
-        materia_csv = limpiar_texto(materia_csv.replace("_", " "))
-    
-        # --- LIMPIAR DNI ---
-        df_csv["SIS Login ID"] = df_csv["SIS Login ID"].astype(str).str.strip()
-    
-        # --- EXTRAER PRIMER NOMBRE DESDE "Student" ---
-        def obtener_primer_nombre(texto):
-            if pd.isna(texto):
-                return ""
-            
-            texto = str(texto)
-    
-            # Formato típico: "Apellido, Nombre ..."
-            if "," in texto:
-                nombre = texto.split(",")[1].strip()
-            else:
-                nombre = texto.strip()
-    
-            # Tomar solo la primera palabra
-            nombre = nombre.split()[0]
-    
-            return nombre
-    
-        df_csv["nombres"] = df_csv["Student"].apply(obtener_primer_nombre)
-    
-        # --- BASE FINAL ---
-        df_final = df_csv[["SIS Login ID", "nombres"]].drop_duplicates()
-        df_final["materia"] = materia_csv
-    
-        df_final.columns = ["dni", "nombres", "materia"]
-    
-        # Limpiar texto
-        for col in ['nombres', 'materia']:
-            df_final[col] = df_final[col].apply(limpiar_texto)
-    
-        # --- DIVISIÓN EN BLOQUES ---
-        chunk_size = 100
-        total = len(df_final)
-    
-        st.success(f"✅ Se generaron {total} registros")
-    
-        for i in range(0, total, chunk_size):
-            chunk = df_final.iloc[i:i + chunk_size]
-    
-            output = io.BytesIO()
-            with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
-                chunk.to_excel(writer, index=False, header=False)
-    
-            parte = (i // chunk_size) + 1
-            sufijo = f"_{parte}" if parte > 1 else ""
-    
-            nombre_archivo = f"{nombre_base}{sufijo}.xlsx"
-    
-            st.download_button(
-                label=f"📥 Descargar {nombre_archivo}",
-                data=output.getvalue(),
-                file_name=nombre_archivo
-            )
+        else:
+            # --- LIMPIEZA CSV (Canvas) ---
+            df_csv = pd.read_csv(archivo_csv)
+        
+            # Eliminar segunda fila (índice 1)
+            df_csv = df_csv.drop(index=1).reset_index(drop=True)
+        
+            # Reasignar correctamente encabezados
+            df_csv.columns = df_csv.iloc[0]
+            df_csv = df_csv[1:].reset_index(drop=True)
+        
+            # Normalizar columnas
+            df_csv.columns = df_csv.columns.astype(str).str.strip()
+        
+            # --- EXTRAER MATERIA DESDE NOMBRE ---
+            materia_csv = nombre_sin_ext.split("Calificaciones-")[1]
+            materia_csv = limpiar_texto(materia_csv.replace("_", " "))
+        
+            # --- LIMPIAR DNI ---
+            df_csv["SIS Login ID"] = df_csv["SIS Login ID"].astype(str).str.strip()
+        
+            # --- EXTRAER PRIMER NOMBRE DESDE "Student" ---
+            def obtener_primer_nombre(texto):
+                if pd.isna(texto):
+                    return ""
+                
+                texto = str(texto)
+        
+                # Formato típico: "Apellido, Nombre ..."
+                if "," in texto:
+                    nombre = texto.split(",")[1].strip()
+                else:
+                    nombre = texto.strip()
+        
+                # Tomar solo la primera palabra
+                nombre = nombre.split()[0]
+        
+                return nombre
+        
+            df_csv["nombres"] = df_csv["Student"].apply(obtener_primer_nombre)
+        
+            # --- BASE FINAL ---
+            df_final = df_csv[["SIS Login ID", "nombres"]].drop_duplicates()
+            df_final["materia"] = materia_csv
+        
+            df_final.columns = ["dni", "nombres", "materia"]
+        
+            # Limpiar texto
+            for col in ['nombres', 'materia']:
+                df_final[col] = df_final[col].apply(limpiar_texto)
+        
+            # --- DIVISIÓN EN BLOQUES ---
+            chunk_size = 100
+            total = len(df_final)
+        
+            st.success(f"✅ Se generaron {total} registros")
+        
+            for i in range(0, total, chunk_size):
+                chunk = df_final.iloc[i:i + chunk_size]
+        
+                output = io.BytesIO()
+                with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
+                    chunk.to_excel(writer, index=False, header=False)
+        
+                parte = (i // chunk_size) + 1
+                sufijo = f"_{parte}" if parte > 1 else ""
+        
+                nombre_archivo = f"{nombre_base}{sufijo}.xlsx"
+        
+                st.download_button(
+                    label=f"📥 Descargar {nombre_archivo}",
+                    data=output.getvalue(),
+                    file_name=nombre_archivo
+                )
         st.write("Vista previa:")
         st.dataframe(df_final)
 
