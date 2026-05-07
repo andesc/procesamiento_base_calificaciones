@@ -18,8 +18,8 @@ def limpiar_texto(texto):
     trans_tab = str.maketrans("áéíóúÁÉÍÓÚ", "aeiouAEIOU")
     return texto.translate(trans_tab)
 
-def extraer_primer_nombre(celda):
-    """Maneja formato 'Apellido, Nombre' o 'Nombre Apellido' para extraer el primer nombre."""
+def extraer_y_formatear_nombre(celda):
+    """Extrae el primer nombre y lo formatea (Mayúscula inicial, resto minúsculas)."""
     s = str(celda).strip()
     if "," in s:
         # Formato "Acebedo, Ernesto" -> tomamos lo que está tras la coma
@@ -27,8 +27,11 @@ def extraer_primer_nombre(celda):
     else:
         # Formato "Ernesto Acebedo" -> tomamos la primera parte
         parte_nombre = s
-    # De la parte resultante, tomamos solo la primera palabra
-    return parte_nombre.split()[0] if parte_nombre.split() else ""
+    
+    primer_nombre = parte_nombre.split()[0] if parte_nombre.split() else ""
+    
+    # Normalización: Primera Mayúscula, resto minúsculas
+    return primer_nombre.capitalize()
 
 # --- INICIALIZACIÓN DE ESTADO ---
 if 'count' not in st.session_state:
@@ -116,13 +119,14 @@ if archivo_csv and (opcion_base == "Base para Whatsapp" or archivo_xlsx):
             
             df_csv["dni"] = df_csv["SIS Login ID"].astype(str).str.strip().str.replace('.0', '', regex=False)
             
-            # --- NUEVA LÓGICA DE NOMBRE ---
-            # Aplicamos la función que detecta la coma y extrae el primer nombre real
-            df_csv["nombre"] = df_csv["Student"].apply(extraer_primer_nombre)
+            # Extraemos primer nombre y normalizamos (Ej: ERNESTO -> Ernesto)
+            df_csv["nombre"] = df_csv["Student"].apply(extraer_y_formatear_nombre)
             
             df_csv["materia_col"] = materia_limpia
             
             df_final = df_csv[['dni', 'nombre', 'materia_col']].drop_duplicates()
+            
+            # Aplicar limpieza de caracteres (tildes y ñ) después de la normalización
             df_final['nombre'] = df_final['nombre'].apply(limpiar_texto)
             df_final['materia_col'] = df_final['materia_col'].apply(limpiar_texto)
             
