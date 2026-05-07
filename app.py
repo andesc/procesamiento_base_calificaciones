@@ -95,7 +95,13 @@ if archivo_csv and (opcion_base == "Base para Whatsapp" or archivo_xlsx):
             nombre_base = f"{materia_limpia}-{fecha}-HUB"
         else:
             # Lógica WhatsApp: Saltamos la fila "Points Possible" que Canvas inserta en la fila 2 (índice 0)
-            df_csv = pd.read_csv(archivo_csv)
+          # Versión robusta para leer el CSV de Canvas
+            df_csv = pd.read_csv(
+                archivo_csv, 
+                sep=None,          # Detecta automáticamente si es coma o punto y coma
+                engine='python',   # Usa el motor de Python para mayor flexibilidad
+                on_bad_lines='skip' # Ignora las filas que tengan un formato distinto al resto
+            )
             df_csv.columns = df_csv.columns.str.strip()
             
             # Eliminamos la fila de 'Points Possible' si existe (Canvas suele ponerla al inicio)
