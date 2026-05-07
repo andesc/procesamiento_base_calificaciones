@@ -38,7 +38,7 @@ if 'count' not in st.session_state:
     st.session_state.count = 0
 
 # --- INTERFAZ INICIAL ---
-st.title("🛠️ Herramienta de Tutoría")
+st.title("🛠️ Generación de bases")
 opcion_base = st.radio(
     "Selecciona el tipo de base que deseas generar:",
     ["Base para HubSpot", "Base para Whatsapp"],
