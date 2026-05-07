@@ -81,11 +81,22 @@ if archivo_csv and (opcion_base == "Base para Whatsapp" or archivo_xlsx):
         except:
             fecha, materia_limpia = "SinFecha", "Materia"
         
+        # Lectura robusta del CSV
+        df_csv = pd.read_csv(
+            archivo_csv, 
+            sep=None, 
+            engine='python', 
+            on_bad_lines='skip'
+        )
+        df_csv.columns = df_csv.columns.str.strip()
+
         if opcion_base == "Base para HubSpot":
-            df_csv = pd.read_csv(archivo_csv)
             df_xlsx = pd.read_excel(archivo_xlsx)
-            df_csv.columns = df_csv.columns.str.strip()
             df_xlsx.columns = df_xlsx.columns.str.strip().str.lower()
+            
+            # Limpieza de la fila "Points Possible" para HubSpot también por seguridad
+            df_csv = df_csv[df_csv['Student'].str.contains('Points Possible|read only', case=False, na=False) == False]
+            
             df_csv["SIS Login ID"] = df_csv["SIS Login ID"].astype(str).str.strip().str.replace('.0', '', regex=False)
             df_xlsx["dni"] = df_xlsx["dni"].astype(str).str.strip().str.replace('.0', '', regex=False)
             
@@ -94,36 +105,31 @@ if archivo_csv and (opcion_base == "Base para Whatsapp" or archivo_xlsx):
             header_bool = True
             nombre_base = f"{materia_limpia}-{fecha}-HUB"
         else:
-            # Lógica WhatsApp: Saltamos la fila "Points Possible" que Canvas inserta en la fila 2 (índice 0)
-          # Versión robusta para leer el CSV de Canvas
-            df_csv = pd.read_csv(
-                archivo_csv, 
-                sep=None,          # Detecta automáticamente si es coma o punto y coma
-                engine='python',   # Usa el motor de Python para mayor flexibilidad
-                on_bad_lines='skip' # Ignora las filas que tengan un formato distinto al resto
-            )
-            df_csv.columns = df_csv.columns.str.strip()
-            
-            # Eliminamos la fila de 'Points Possible' si existe (Canvas suele ponerla al inicio)
-            df_csv = df_csv[df_csv['Student'] != 'Points Possible']
+            # LÓGICA WHATSAPP: Limpieza profunda de la fila técnica de Canvas
+            # Filtramos cualquier fila que en la columna 'Student' tenga "Points" o esté vacía
+            df_csv = df_csv[df_csv['Student'].str.contains('Points|Possible', case=False, na=False) == False]
+            df_csv = df_csv.dropna(subset=['Student', 'SIS Login ID'])
             
             df_csv["dni"] = df_csv["SIS Login ID"].astype(str).str.strip().str.replace('.0', '', regex=False)
+            
+            # Capturar nombre: Limpiar comas y quedarnos con el primer dato
             df_csv["nombre"] = df_csv["Student"].astype(str).str.replace(',', '').str.split().str[0]
             df_csv["materia_col"] = materia_limpia
             
             df_final = df_csv[['dni', 'nombre', 'materia_col']].drop_duplicates()
+            
+            # Aplicar limpieza de caracteres especiales
             df_final['nombre'] = df_final['nombre'].apply(limpiar_texto)
             df_final['materia_col'] = df_final['materia_col'].apply(limpiar_texto)
             
             header_bool = False
             nombre_base = f"{materia_limpia}-{fecha}-WSP"
 
-        # --- GENERACIÓN Y DESCARGA (Con partición de 100 filas) ---
+        # --- GENERACIÓN Y DESCARGA CON PARTICIÓN ---
         if not df_final.empty:
             total_filas = len(df_final)
             st.success(f"✅ Se procesaron {total_filas} registros.")
             
-            # Dividir en bloques de 100
             for i in range(0, total_filas, 100):
                 chunk = df_final.iloc[i : i + 100]
                 parte = (i // 100) + 1
@@ -137,17 +143,17 @@ if archivo_csv and (opcion_base == "Base para Whatsapp" or archivo_xlsx):
                     label=f"📥 Descargar {nombre_archivo}", 
                     data=output.getvalue(), 
                     file_name=nombre_archivo,
-                    key=f"btn_{i}"
+                    key=f"btn_{i}_{st.session_state.count}"
                 )
             
-            st.write("Vista previa (primeras filas):")
+            st.write("Vista previa (primeras 100 filas):")
             st.dataframe(df_final.head(100))
         else:
-            st.warning("⚠️ No hay datos para procesar.")
+            st.warning("⚠️ No se encontraron datos válidos. Verifica que el CSV sea el correcto.")
 
         st.divider()
         if st.button("➕ Realizar nueva carga", type="primary", on_click=reiniciar_aplicacion):
             pass
 
     except Exception as e:
-        st.error(f"Error: {e}")
+        st.error(f"Error en el procesamiento: {e}")
