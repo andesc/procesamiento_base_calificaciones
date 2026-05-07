@@ -2,7 +2,6 @@ import streamlit as st
 import pandas as pd
 import io
 import os
-import unicodedata
 
 # Configuración de la página
 st.set_page_config(page_title="Procesamiento Base Calificaciones", page_icon="📧")
@@ -67,12 +66,11 @@ if opcion_base == "Base para HubSpot":
 else:
     st.write("Sube el archivo 👇 y luego haz clic en descargar")
     archivo_csv = st.file_uploader("1. Reporte de Calificaciones (CSV)", type=["csv"], key=f"csv_wsp_{st.session_state.count}")
-    archivo_xlsx = None # No se requiere para WhatsApp
+    archivo_xlsx = None
 
 # --- PROCESAMIENTO ---
 if archivo_csv and (opcion_base == "Base para Whatsapp" or archivo_xlsx):
     try:
-        # Lógica de Nombres y extracción de Materia del nombre del archivo
         nombre_original = archivo_csv.name
         nombre_sin_ext = os.path.splitext(nombre_original)[0]
         
@@ -83,12 +81,9 @@ if archivo_csv and (opcion_base == "Base para Whatsapp" or archivo_xlsx):
         except:
             fecha, materia_limpia = "SinFecha", "Materia"
         
-        # Procesamiento según opción
         if opcion_base == "Base para HubSpot":
             df_csv = pd.read_csv(archivo_csv)
             df_xlsx = pd.read_excel(archivo_xlsx)
-            
-            # Normalización
             df_csv.columns = df_csv.columns.str.strip()
             df_xlsx.columns = df_xlsx.columns.str.strip().str.lower()
             df_csv["SIS Login ID"] = df_csv["SIS Login ID"].astype(str).str.strip().str.replace('.0', '', regex=False)
@@ -97,50 +92,53 @@ if archivo_csv and (opcion_base == "Base para Whatsapp" or archivo_xlsx):
             df_unido = pd.merge(df_csv, df_xlsx[['dni', 'email']], left_on="SIS Login ID", right_on="dni", how="inner")
             df_final = df_unido[['email']].drop_duplicates()
             header_bool = True
-            nombre_salida = f"{materia_limpia}-{fecha}-HUB.xlsx"
-            
+            nombre_base = f"{materia_limpia}-{fecha}-HUB"
         else:
-            # Lógica para WhatsApp (Solo CSV)
+            # Lógica WhatsApp: Saltamos la fila "Points Possible" que Canvas inserta en la fila 2 (índice 0)
             df_csv = pd.read_csv(archivo_csv)
             df_csv.columns = df_csv.columns.str.strip()
             
-            # 1. SIS Login ID (DNI)
+            # Eliminamos la fila de 'Points Possible' si existe (Canvas suele ponerla al inicio)
+            df_csv = df_csv[df_csv['Student'] != 'Points Possible']
+            
             df_csv["dni"] = df_csv["SIS Login ID"].astype(str).str.strip().str.replace('.0', '', regex=False)
-            
-            # 2. Student (Primer Nombre)
-            # Generalmente Canvas exporta "Apellido, Nombre" o "Nombre Apellido"
-            # Tomamos la primera parte después de limpiar posibles comas
             df_csv["nombre"] = df_csv["Student"].astype(str).str.replace(',', '').str.split().str[0]
-            
-            # 3. Materia (del nombre del archivo)
             df_csv["materia_col"] = materia_limpia
             
-            # Seleccionar y limpiar texto
             df_final = df_csv[['dni', 'nombre', 'materia_col']].drop_duplicates()
             df_final['nombre'] = df_final['nombre'].apply(limpiar_texto)
             df_final['materia_col'] = df_final['materia_col'].apply(limpiar_texto)
             
             header_bool = False
-            nombre_salida = f"{materia_limpia}-{fecha}-WSP.xlsx"
+            nombre_base = f"{materia_limpia}-{fecha}-WSP"
 
-        # --- GENERACIÓN Y DESCARGA ---
+        # --- GENERACIÓN Y DESCARGA (Con partición de 100 filas) ---
         if not df_final.empty:
-            st.success(f"✅ ¡Éxito! Se generó la base con {len(df_final)} registros.")
+            total_filas = len(df_final)
+            st.success(f"✅ Se procesaron {total_filas} registros.")
             
-            output = io.BytesIO()
-            with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
-                df_final.to_excel(writer, index=False, header=header_bool)
+            # Dividir en bloques de 100
+            for i in range(0, total_filas, 100):
+                chunk = df_final.iloc[i : i + 100]
+                parte = (i // 100) + 1
+                nombre_archivo = f"{nombre_base}.xlsx" if parte == 1 else f"{nombre_base}_{parte}.xlsx"
+                
+                output = io.BytesIO()
+                with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
+                    chunk.to_excel(writer, index=False, header=header_bool)
+                
+                st.download_button(
+                    label=f"📥 Descargar {nombre_archivo}", 
+                    data=output.getvalue(), 
+                    file_name=nombre_archivo,
+                    key=f"btn_{i}"
+                )
             
-            st.download_button(label="📥 Descargar base", 
-                               data=output.getvalue(), 
-                               file_name=nombre_salida)
-            
-            st.write("Vista previa:")
-            st.dataframe(df_final)
+            st.write("Vista previa (primeras filas):")
+            st.dataframe(df_final.head(100))
         else:
-            st.warning("⚠️ No se pudieron procesar datos. Verifica el formato de los archivos.")
+            st.warning("⚠️ No hay datos para procesar.")
 
-        # --- BOTÓN DE REINICIO ---
         st.divider()
         if st.button("➕ Realizar nueva carga", type="primary", on_click=reiniciar_aplicacion):
             pass
