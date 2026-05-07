@@ -18,6 +18,18 @@ def limpiar_texto(texto):
     trans_tab = str.maketrans("áéíóúÁÉÍÓÚ", "aeiouAEIOU")
     return texto.translate(trans_tab)
 
+def extraer_primer_nombre(celda):
+    """Maneja formato 'Apellido, Nombre' o 'Nombre Apellido' para extraer el primer nombre."""
+    s = str(celda).strip()
+    if "," in s:
+        # Formato "Acebedo, Ernesto" -> tomamos lo que está tras la coma
+        parte_nombre = s.split(",")[1].strip()
+    else:
+        # Formato "Ernesto Acebedo" -> tomamos la primera parte
+        parte_nombre = s
+    # De la parte resultante, tomamos solo la primera palabra
+    return parte_nombre.split()[0] if parte_nombre.split() else ""
+
 # --- INICIALIZACIÓN DE ESTADO ---
 if 'count' not in st.session_state:
     st.session_state.count = 0
@@ -81,20 +93,13 @@ if archivo_csv and (opcion_base == "Base para Whatsapp" or archivo_xlsx):
         except:
             fecha, materia_limpia = "SinFecha", "Materia"
         
-        # Lectura robusta del CSV
-        df_csv = pd.read_csv(
-            archivo_csv, 
-            sep=None, 
-            engine='python', 
-            on_bad_lines='skip'
-        )
+        # Lectura robusta
+        df_csv = pd.read_csv(archivo_csv, sep=None, engine='python', on_bad_lines='skip')
         df_csv.columns = df_csv.columns.str.strip()
 
         if opcion_base == "Base para HubSpot":
             df_xlsx = pd.read_excel(archivo_xlsx)
             df_xlsx.columns = df_xlsx.columns.str.strip().str.lower()
-            
-            # Limpieza de la fila "Points Possible" para HubSpot también por seguridad
             df_csv = df_csv[df_csv['Student'].str.contains('Points Possible|read only', case=False, na=False) == False]
             
             df_csv["SIS Login ID"] = df_csv["SIS Login ID"].astype(str).str.strip().str.replace('.0', '', regex=False)
@@ -105,27 +110,26 @@ if archivo_csv and (opcion_base == "Base para Whatsapp" or archivo_xlsx):
             header_bool = True
             nombre_base = f"{materia_limpia}-{fecha}-HUB"
         else:
-            # LÓGICA WHATSAPP: Limpieza profunda de la fila técnica de Canvas
-            # Filtramos cualquier fila que en la columna 'Student' tenga "Points" o esté vacía
+            # LÓGICA WHATSAPP
             df_csv = df_csv[df_csv['Student'].str.contains('Points|Possible', case=False, na=False) == False]
             df_csv = df_csv.dropna(subset=['Student', 'SIS Login ID'])
             
             df_csv["dni"] = df_csv["SIS Login ID"].astype(str).str.strip().str.replace('.0', '', regex=False)
             
-            # Capturar nombre: Limpiar comas y quedarnos con el primer dato
-            df_csv["nombre"] = df_csv["Student"].astype(str).str.replace(',', '').str.split().str[0]
+            # --- NUEVA LÓGICA DE NOMBRE ---
+            # Aplicamos la función que detecta la coma y extrae el primer nombre real
+            df_csv["nombre"] = df_csv["Student"].apply(extraer_primer_nombre)
+            
             df_csv["materia_col"] = materia_limpia
             
             df_final = df_csv[['dni', 'nombre', 'materia_col']].drop_duplicates()
-            
-            # Aplicar limpieza de caracteres especiales
             df_final['nombre'] = df_final['nombre'].apply(limpiar_texto)
             df_final['materia_col'] = df_final['materia_col'].apply(limpiar_texto)
             
             header_bool = False
             nombre_base = f"{materia_limpia}-{fecha}-WSP"
 
-        # --- GENERACIÓN Y DESCARGA CON PARTICIÓN ---
+        # --- GENERACIÓN Y DESCARGA ---
         if not df_final.empty:
             total_filas = len(df_final)
             st.success(f"✅ Se procesaron {total_filas} registros.")
@@ -146,14 +150,14 @@ if archivo_csv and (opcion_base == "Base para Whatsapp" or archivo_xlsx):
                     key=f"btn_{i}_{st.session_state.count}"
                 )
             
-            st.write("Vista previa (primeras 100 filas):")
-            st.dataframe(df_final.head(100))
+            st.write("Vista previa:")
+            st.dataframe(df_final.head(10))
         else:
-            st.warning("⚠️ No se encontraron datos válidos. Verifica que el CSV sea el correcto.")
+            st.warning("⚠️ No hay datos para procesar.")
 
         st.divider()
         if st.button("➕ Realizar nueva carga", type="primary", on_click=reiniciar_aplicacion):
             pass
 
     except Exception as e:
-        st.error(f"Error en el procesamiento: {e}")
+        st.error(f"Error: {e}")
