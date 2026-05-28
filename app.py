@@ -108,7 +108,6 @@ if archivo_csv and archivo_xlsx:
             actividades_seleccionadas = st.multiselect("1. Selecciona la/s Actividad/es que deseas controlar (Obligatorio):", options=actividades_disponibles)
             
             # 2. FILTRO DE MATERIAS (Segundo y Opcional)
-            # Obtenemos las materias presentes en las entregas para mapear cursado real
             materias_disponibles = sorted(df_submissions['course name'].dropna().unique())
             materias_seleccionadas = st.multiselect("2. Selecciona la/s Materia/s a evaluar (Opcional - Si dejas vacío evalúa todas):", options=materias_disponibles)
             
@@ -179,4 +178,16 @@ if archivo_csv and archivo_xlsx:
                         key=f"btn_descarga_{st.session_state.count}"
                     )
                     
-                    st.write("**Vista previa de deudores activos (Primeras 10 filas
+                    st.write("**Vista previa de deudores activos (Primeras 10 filas):**")
+                    st.dataframe(df_final.head(10))
+                else:
+                    st.info("🎉 ¡Perfecto! No se encontraron alumnos cursando que deban las actividades en las materias seleccionadas.")
+            else:
+                st.warning("⚠️ Por favor, selecciona al menos una actividad en el primer filtro para iniciar el cruce.")
+
+        st.divider()
+        if st.button("➕ Realizar nueva carga", type="primary", on_click=reiniciar_aplicacion):
+            pass
+
+    except Exception as e:
+        st.error(f"Ocurrió un error al procesar los archivos: {e}")
