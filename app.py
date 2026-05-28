@@ -15,7 +15,6 @@ def extraer_primer_nombre(celda):
     s = str(celda).strip()
     if not s or s.lower() == 'nan':
         return ""
-    # Si viene con formato Apellido, Nombre (ej: "Romero, Joana Natali") tomamos lo que sigue a la coma
     if "," in s:
         s = s.split(",")[1].strip()
     
@@ -50,7 +49,7 @@ def normalizar_actividad(actividad):
     if "PEF" in act_upper:
         return "PEF"
         
-    return None # Si no coincide con ninguna categoría buscada
+    return None
 
 # --- INICIALIZACIÓN DE ESTADO ---
 if 'count' not in st.session_state:
@@ -58,7 +57,7 @@ if 'count' not in st.session_state:
 
 # --- INTERFAZ ---
 st.title("🛠️ Generador de bases: Submissions")
-st.markdown("Filtra alumnos de la base general que **adeudan** las tareas seleccionadas.")
+st.markdown("Filtra alumnos que **cursan** una materia pero **adeudan** la actividad seleccionada.")
 st.divider()
 
 # --- CARGA DE ARCHIVOS ---
@@ -72,11 +71,11 @@ with col2:
 # --- PROCESAMIENTO PRINCIPAL ---
 if archivo_csv and archivo_xlsx:
     try:
-        # 1. Leer archivo Submissions (CSV) de forma robusta
+        # 1. Leer archivo Submissions (CSV)
         df_submissions = pd.read_csv(archivo_csv, sep=None, engine='python', on_bad_lines='skip')
         df_submissions.columns = df_submissions.columns.str.strip().str.lower()
         
-        # 2. Leer archivo Base de alumnos (Soporta .xlsx o .csv según el formato en el que se suba)
+        # 2. Leer archivo Base de alumnos (.xlsx o .csv)
         nombre_base_file = archivo_xlsx.name
         if nombre_base_file.endswith('.csv'):
             df_base = pd.read_csv(archivo_xlsx, sep=None, engine='python', on_bad_lines='skip')
@@ -85,7 +84,7 @@ if archivo_csv and archivo_xlsx:
             
         df_base.columns = df_base.columns.str.strip().str.lower()
 
-        # Verificar columnas obligatorias mínimas
+        # Verificar columnas obligatorias
         cols_csv_req = {'canvas user id', 'course name', 'assignment name'}
         cols_xlsx_req = {'canvas_id', 'dni', 'nombres', 'email', 'celular'}
         
@@ -94,60 +93,78 @@ if archivo_csv and archivo_xlsx:
         elif not cols_xlsx_req.issubset(df_base.columns):
             st.error(f"El archivo Base debe contener las columnas: {cols_xlsx_req}")
         else:
-            # Estandarizar identificadores de Canvas a string para evitar errores de float/int
+            # Estandarizar identificadores de Canvas a string
             df_submissions['canvas user id'] = df_submissions['canvas user id'].astype(str).str.strip().str.replace('.0', '', regex=False)
             df_base['canvas_id'] = df_base['canvas_id'].astype(str).str.strip().str.replace('.0', '', regex=False)
             
-            # Aplicar mapeo de filtros a las actividades en el CSV
+            # Aplicar mapeo de filtros
             df_submissions['actividad_filtro'] = df_submissions['assignment name'].apply(normalizar_actividad)
-            
-            # Filtrar filas que tengan un mapeo válido de actividad
-            df_submissions = df_submissions.dropna(subset=['actividad_filtro'])
             
             st.divider()
             st.markdown("### 🔍 Configuración de Filtros")
             
-            # Obtener listas únicas para los selectores
-            materias_disponibles = sorted(df_submissions['course name'].dropna().unique())
+            # 1. FILTRO DE ACTIVIDADES (Primero y Obligatorio)
             actividades_disponibles = ["API 1", "API 2", "API 3", "API 4", "AE 1", "AE 2", "AE 3", "AE 4", "PEF"]
+            actividades_seleccionadas = st.multiselect("1. Selecciona la/s Actividad/es que deseas controlar (Obligatorio):", options=actividades_disponibles)
             
-            # Componentes de filtrado en Streamlit
-            materias_seleccionadas = st.multiselect("Selecciona la/s Materia/s a evaluar:", options=materias_disponibles)
-            actividades_seleccionadas = st.multiselect("Selecciona la/s Actividad/es que deseas controlar:", options=actividades_disponibles)
+            # 2. FILTRO DE MATERIAS (Segundo y Opcional)
+            # Obtenemos las materias presentes en las entregas para mapear cursado real
+            materias_disponibles = sorted(df_submissions['course name'].dropna().unique())
+            materias_seleccionadas = st.multiselect("2. Selecciona la/s Materia/s a evaluar (Opcional - Si dejas vacío evalúa todas):", options=materias_disponibles)
             
-            if materias_seleccionadas and actividades_seleccionadas:
+            if actividades_seleccionadas:
+                # Si se seleccionaron materias, filtramos el universo por ellas. Si no, tomamos todas.
+                materias_a_procesar = materias_seleccionadas if materias_seleccionadas else materias_disponibles
                 
-                # Filtrar el universo de entregas reales con los parámetros elegidos
-                entregas_filtradas = df_submissions[
-                    (df_submissions['course name'].isin(materias_seleccionadas)) &
-                    (df_submissions['actividad_filtro'].isin(actividades_seleccionadas))
-                ]
+                lista_deudores_acumulados = []
                 
-                # Alumnos que SÍ entregaron (creamos un set de IDs únicos que cumplieron)
-                ids_con_entrega = set(entregas_filtradas['canvas user id'].unique())
+                # Iteramos materia por materia para asegurar que solo evaluamos a los que "cursan" cada una
+                for materia in materias_a_procesar:
+                    # Alumnos que están cursando esta materia según el reporte de submissions (hicieron al menos alguna entrega en ella)
+                    alumnos_cursando_materia = df_submissions[df_submissions['course name'] == materia]['canvas user id'].unique()
+                    
+                    if len(alumnos_cursando_materia) == 0:
+                        continue
+                        
+                    # De los que cursan esta materia, vemos quiénes sí entregaron la/s actividad/es seleccionada/s
+                    alumnos_con_entrega = df_submissions[
+                        (df_submissions['course name'] == materia) & 
+                        (df_submissions['actividad_filtro'].isin(actividades_seleccionadas))
+                    ]['canvas user id'].unique()
+                    
+                    # Los deudores de ESTA materia son los que están cursando pero NO entregaron la actividad
+                    ids_deudores_materia = set(alumnos_cursando_materia) - set(alumnos_con_entrega)
+                    
+                    if ids_deudores_materia:
+                        # Extraemos los datos de estos deudores desde la base general
+                        df_deudores_materia = df_base[df_base['canvas_id'].isin(ids_deudores_materia)].copy()
+                        # Le asignamos la materia correspondiente a la deuda
+                        df_deudores_materia['materia'] = materia
+                        lista_deudores_acumulados.append(df_deudores_materia)
                 
-                # Filtrar base general: Alumnos que NO están en el grupo que entregó
-                df_deudores = df_base[~df_base['canvas_id'].isin(ids_con_entrega)].copy()
-                
-                # Construir columnas finales solicitadas
-                df_deudores['nombre'] = df_deudores['nombres'].apply(extraer_primer_nombre)
-                
-                # Asegurar formato de texto limpio en DNI, Celular y Mail
-                df_deudores['dni'] = df_deudores['dni'].astype(str).str.strip().str.replace('.0', '', regex=False)
-                df_deudores['celular'] = df_deudores['celular'].astype(str).str.strip().str.replace('.0', '', regex=False)
-                df_deudores['email'] = df_deudores['email'].astype(str).str.strip()
-                
-                # Seleccionar exclusivamente las columnas requeridas para el reporte final
-                df_final = df_deudores[['dni', 'nombre', 'email', 'celular']].drop_duplicates()
+                # Consolidar todos los deudores encontrados
+                if lista_deudores_acumulados:
+                    df_final_deudores = pd.concat(lista_deudores_acumulados, ignore_index=True)
+                    
+                    # Formatear columnas de salida requeridas
+                    df_final_deudores['nombre'] = df_final_deudores['nombres'].apply(extraer_primer_nombre)
+                    df_final_deudores['dni'] = df_final_deudores['dni'].astype(str).str.strip().str.replace('.0', '', regex=False)
+                    df_final_deudores['celular'] = df_final_deudores['celular'].astype(str).str.strip().str.replace('.0', '', regex=False)
+                    df_final_deudores['email'] = df_final_deudores['email'].astype(str).str.strip()
+                    
+                    # Seleccionar y ordenar las columnas finales incluyendo 'materia'
+                    df_final = df_final_deudores[['dni', 'nombre', 'email', 'celular', 'materia']].drop_duplicates()
+                else:
+                    df_final = pd.DataFrame()
                 
                 st.divider()
                 
                 # --- GENERACIÓN Y DESCARGA ---
                 if not df_final.empty:
                     total_filas = len(df_final)
-                    st.success(f"✅ Se detectaron {total_filas} alumnos que adeudan las tareas seleccionadas.")
+                    st.success(f"✅ Se detectaron {total_filas} registros de deudas de alumnos activos en cursado.")
                     
-                    nombre_archivo_salida = "base_deudores_submissions.xlsx"
+                    nombre_archivo_salida = "base_deudores_activos.xlsx"
                     
                     # Generar Excel en memoria
                     output = io.BytesIO()
@@ -162,16 +179,4 @@ if archivo_csv and archivo_xlsx:
                         key=f"btn_descarga_{st.session_state.count}"
                     )
                     
-                    st.write("**Vista previa de los alumnos deudores (Primeras 10 filas):**")
-                    st.dataframe(df_final.head(10))
-                else:
-                    st.info("🎉 ¡Buenas noticias! No se encontraron alumnos deudores con los criterios seleccionados.")
-            else:
-                st.warning("⚠️ Selecciona al menos una materia y una actividad para calcular la base de deudores.")
-
-        st.divider()
-        if st.button("➕ Realizar nueva carga", type="primary", on_click=reiniciar_aplicacion):
-            pass
-
-    except Exception as e:
-        st.error(f"Ocurrió un error al procesar los archivos: {e}")
+                    st.write("**Vista previa de deudores activos (Primeras 10 filas
