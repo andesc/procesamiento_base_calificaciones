@@ -4,164 +4,174 @@ import io
 import os
 
 # Configuración de la página
-st.set_page_config(page_title="Procesamiento Base Calificaciones", page_icon="📧")
+st.set_page_config(page_title="Generador de Bases Submissions", page_icon="🛠️")
 
 # --- FUNCIONES DE UTILIDAD ---
 def reiniciar_aplicacion():
     st.session_state.count += 1
 
-def limpiar_texto(texto):
-    """Elimina tildes, convierte Ñ en ni y normaliza texto."""
-    if not isinstance(texto, str):
-        return str(texto)
-    texto = texto.replace('ñ', 'ni').replace('Ñ', 'Ni')
-    trans_tab = str.maketrans("áéíóúÁÉÍÓÚ", "aeiouAEIOU")
-    return texto.translate(trans_tab)
-
-def extraer_y_formatear_nombre(celda):
-    """Extrae el primer nombre y lo formatea (Mayúscula inicial, resto minúsculas)."""
+def extraer_primer_nombre(celda):
+    """Extrae la primera palabra que figura en nombres y le da formato Capitalize."""
     s = str(celda).strip()
+    if not s or s.lower() == 'nan':
+        return ""
+    # Si viene con formato Apellido, Nombre (ej: "Romero, Joana Natali") tomamos lo que sigue a la coma
     if "," in s:
-        # Formato "Acebedo, Ernesto" -> tomamos lo que está tras la coma
-        parte_nombre = s.split(",")[1].strip()
-    else:
-        # Formato "Ernesto Acebedo" -> tomamos la primera parte
-        parte_nombre = s
+        s = s.split(",")[1].strip()
     
-    primer_nombre = parte_nombre.split()[0] if parte_nombre.split() else ""
-    
-    # Normalización: Primera Mayúscula, resto minúsculas
+    primer_nombre = s.split()[0] if s.split() else ""
     return primer_nombre.capitalize()
+
+def normalizar_actividad(actividad):
+    """Mapea los nombres del CSV de entregas según las reglas definidas."""
+    act_upper = str(actividad).upper().strip()
+    
+    # Mapeo de APIs
+    if "AP1" in act_upper or "API1" in act_upper or "AI1" in act_upper:
+        return "API 1"
+    if "AP2" in act_upper or "API2" in act_upper or "AI2" in act_upper:
+        return "API 2"
+    if "AP3" in act_upper or "API3" in act_upper or "AI3" in act_upper:
+        return "API 3"
+    if "AP4" in act_upper or "API4" in act_upper or "AI4" in act_upper:
+        return "API 4"
+        
+    # Mapeo de AEs
+    if "AE1" in act_upper:
+        return "AE 1"
+    if "AE2" in act_upper:
+        return "AE 2"
+    if "AE3" in act_upper:
+        return "AE 3"
+    if "AE4" in act_upper:
+        return "AE 4"
+        
+    # PEF
+    if "PEF" in act_upper:
+        return "PEF"
+        
+    return None # Si no coincide con ninguna categoría buscada
 
 # --- INICIALIZACIÓN DE ESTADO ---
 if 'count' not in st.session_state:
     st.session_state.count = 0
 
-# --- INTERFAZ INICIAL ---
-st.title("🛠️ Generación de bases")
-opcion_base = st.radio(
-    "Selecciona el tipo de base que deseas generar:",
-    ["Base para HubSpot", "Base para Whatsapp"],
-    key="radio_opcion"
-)
-
+# --- INTERFAZ ---
+st.title("🛠️ Generador de bases: Submissions")
+st.markdown("Filtra alumnos de la base general que **adeudan** las tareas seleccionadas.")
 st.divider()
 
-# --- PASOS A SEGUIR (DESPLEGABLE) ---
+# --- CARGA DE ARCHIVOS ---
 st.markdown("### 📥 Carga de archivos")
-with st.expander("1 - Obtené la base necesaria. Instrucciones aquí."):
-    if opcion_base == "Base para HubSpot":
-        st.markdown("""
-        1. **Obtener el primer archivo (CSV):**
-            * Ingresa a la materia en **Canvas** > **Calificaciones**. 
-            * Aplica los filtros necesarios. 
-            * Selecciona **Exportar** > **Vista actual**. 
-            * ⚠️ **Importante:** No modifiques el nombre del archivo generado.
+col1, col2 = st.columns(2)
+with col1:
+    archivo_csv = st.file_uploader("1. Reporte de Submissions (CSV)", type=["csv"], key=f"csv_{st.session_state.count}")
+with col2:
+    archivo_xlsx = st.file_uploader("2. Base General de Alumnos (Excel / CSV)", type=["xlsx", "csv"], key=f"xlsx_{st.session_state.count}")
 
-        2. **Obtener el segundo archivo (XLSX):**
-            * En tu **Base de Invitaciones**, filtra la materia objetivo.
-            * Asegúrate de incluir los encabezados **dni** y **email**.
-        """)
-    else:
-        st.markdown("""
-        * Ingresa a la materia en **Canvas** > **Calificaciones**. 
-        * Aplica los filtros necesarios. 
-        * Selecciona **Exportar** > **Vista actual**. 
-        * ⚠️ **Importante:** No modifiques el nombre del archivo generado.
-        """)
-
-# --- CARGA DE ARCHIVOS DINÁMICA ---
-if opcion_base == "Base para HubSpot":
-    st.write("Sube los archivos 👇 y luego haz clic en descargar")
-    col1, col2 = st.columns(2)
-    with col1:
-        archivo_csv = st.file_uploader("1. Reporte de Calificaciones (CSV)", type=["csv"], key=f"csv_{st.session_state.count}")
-    with col2:
-        archivo_xlsx = st.file_uploader("2. Base de Alumnos (XLSX)", type=["xlsx"], key=f"xlsx_{st.session_state.count}")
-else:
-    st.write("Sube el archivo 👇 y luego haz clic en descargar")
-    archivo_csv = st.file_uploader("1. Reporte de Calificaciones (CSV)", type=["csv"], key=f"csv_wsp_{st.session_state.count}")
-    archivo_xlsx = None
-
-# --- PROCESAMIENTO ---
-if archivo_csv and (opcion_base == "Base para Whatsapp" or archivo_xlsx):
+# --- PROCESAMIENTO PRINCIPAL ---
+if archivo_csv and archivo_xlsx:
     try:
-        nombre_original = archivo_csv.name
-        nombre_sin_ext = os.path.splitext(nombre_original)[0]
+        # 1. Leer archivo Submissions (CSV) de forma robusta
+        df_submissions = pd.read_csv(archivo_csv, sep=None, engine='python', on_bad_lines='skip')
+        df_submissions.columns = df_submissions.columns.str.strip().str.lower()
         
-        try:
-            fecha = f"{nombre_sin_ext[8:10]}-{nombre_sin_ext[5:7]}"
-            materia_bruta = nombre_sin_ext.split("Calificaciones-")[1] if "Calificaciones-" in nombre_sin_ext else "Procesado"
-            materia_limpia = materia_bruta.replace("_", " ")
-        except:
-            fecha, materia_limpia = "SinFecha", "Materia"
+        # 2. Leer archivo Base de alumnos (Soporta .xlsx o .csv según el formato en el que se suba)
+        nombre_base_file = archivo_xlsx.name
+        if nombre_base_file.endswith('.csv'):
+            df_base = pd.read_csv(archivo_xlsx, sep=None, engine='python', on_bad_lines='skip')
+        else:
+            df_base = pd.read_excel(archivo_xlsx)
+            
+        df_base.columns = df_base.columns.str.strip().str.lower()
+
+        # Verificar columnas obligatorias mínimas
+        cols_csv_req = {'canvas user id', 'course name', 'assignment name'}
+        cols_xlsx_req = {'canvas_id', 'dni', 'nombres', 'email', 'celular'}
         
-        # Lectura robusta
-        df_csv = pd.read_csv(archivo_csv, sep=None, engine='python', on_bad_lines='skip')
-        df_csv.columns = df_csv.columns.str.strip()
-
-        if opcion_base == "Base para HubSpot":
-            df_xlsx = pd.read_excel(archivo_xlsx)
-            df_xlsx.columns = df_xlsx.columns.str.strip().str.lower()
-            df_csv = df_csv[df_csv['Student'].str.contains('Points Possible|read only', case=False, na=False) == False]
-            
-            df_csv["SIS Login ID"] = df_csv["SIS Login ID"].astype(str).str.strip().str.replace('.0', '', regex=False)
-            df_xlsx["dni"] = df_xlsx["dni"].astype(str).str.strip().str.replace('.0', '', regex=False)
-            
-            df_unido = pd.merge(df_csv, df_xlsx[['dni', 'email']], left_on="SIS Login ID", right_on="dni", how="inner")
-            df_final = df_unido[['email']].drop_duplicates()
-            header_bool = True
-            nombre_base = f"{materia_limpia}-{fecha}-HUB"
+        if not cols_csv_req.issubset(df_submissions.columns):
+            st.error(f"El CSV de submissions debe contener las columnas: {cols_csv_req}")
+        elif not cols_xlsx_req.issubset(df_base.columns):
+            st.error(f"El archivo Base debe contener las columnas: {cols_xlsx_req}")
         else:
-            # LÓGICA WHATSAPP
-            df_csv = df_csv[df_csv['Student'].str.contains('Points|Possible', case=False, na=False) == False]
-            df_csv = df_csv.dropna(subset=['Student', 'SIS Login ID'])
+            # Estandarizar identificadores de Canvas a string para evitar errores de float/int
+            df_submissions['canvas user id'] = df_submissions['canvas user id'].astype(str).str.strip().str.replace('.0', '', regex=False)
+            df_base['canvas_id'] = df_base['canvas_id'].astype(str).str.strip().str.replace('.0', '', regex=False)
             
-            df_csv["dni"] = df_csv["SIS Login ID"].astype(str).str.strip().str.replace('.0', '', regex=False)
+            # Aplicar mapeo de filtros a las actividades en el CSV
+            df_submissions['actividad_filtro'] = df_submissions['assignment name'].apply(normalizar_actividad)
             
-            # Extraemos primer nombre y normalizamos (Ej: ERNESTO -> Ernesto)
-            df_csv["nombre"] = df_csv["Student"].apply(extraer_y_formatear_nombre)
+            # Filtrar filas que tengan un mapeo válido de actividad
+            df_submissions = df_submissions.dropna(subset=['actividad_filtro'])
             
-            df_csv["materia_col"] = materia_limpia
+            st.divider()
+            st.markdown("### 🔍 Configuración de Filtros")
             
-            df_final = df_csv[['dni', 'nombre', 'materia_col']].drop_duplicates()
+            # Obtener listas únicas para los selectores
+            materias_disponibles = sorted(df_submissions['course name'].dropna().unique())
+            actividades_disponibles = ["API 1", "API 2", "API 3", "API 4", "AE 1", "AE 2", "AE 3", "AE 4", "PEF"]
             
-            # Aplicar limpieza de caracteres (tildes y ñ) después de la normalización
-            df_final['nombre'] = df_final['nombre'].apply(limpiar_texto)
-            df_final['materia_col'] = df_final['materia_col'].apply(limpiar_texto)
+            # Componentes de filtrado en Streamlit
+            materias_seleccionadas = st.multiselect("Selecciona la/s Materia/s a evaluar:", options=materias_disponibles)
+            actividades_seleccionadas = st.multiselect("Selecciona la/s Actividad/es que deseas controlar:", options=actividades_disponibles)
             
-            header_bool = False
-            nombre_base = f"{materia_limpia}-{fecha}-WSP"
-
-        # --- GENERACIÓN Y DESCARGA ---
-        if not df_final.empty:
-            total_filas = len(df_final)
-            st.success(f"✅ Se procesaron {total_filas} registros.")
-            
-            for i in range(0, total_filas, 100):
-                chunk = df_final.iloc[i : i + 100]
-                parte = (i // 100) + 1
-                nombre_archivo = f"{nombre_base}.xlsx" if parte == 1 else f"{nombre_base}_{parte}.xlsx"
+            if materias_seleccionadas and actividades_seleccionadas:
                 
-                output = io.BytesIO()
-                with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
-                    chunk.to_excel(writer, index=False, header=header_bool)
+                # Filtrar el universo de entregas reales con los parámetros elegidos
+                entregas_filtradas = df_submissions[
+                    (df_submissions['course name'].isin(materias_seleccionadas)) &
+                    (df_submissions['actividad_filtro'].isin(actividades_seleccionadas))
+                ]
                 
-                st.download_button(
-                    label=f"📥 Descargar {nombre_archivo}", 
-                    data=output.getvalue(), 
-                    file_name=nombre_archivo,
-                    key=f"btn_{i}_{st.session_state.count}"
-                )
-            
-            st.write("Vista previa:")
-            st.dataframe(df_final.head(10))
-        else:
-            st.warning("⚠️ No hay datos para procesar.")
+                # Alumnos que SÍ entregaron (creamos un set de IDs únicos que cumplieron)
+                ids_con_entrega = set(entregas_filtradas['canvas user id'].unique())
+                
+                # Filtrar base general: Alumnos que NO están en el grupo que entregó
+                df_deudores = df_base[~df_base['canvas_id'].isin(ids_con_entrega)].copy()
+                
+                # Construir columnas finales solicitadas
+                df_deudores['nombre'] = df_deudores['nombres'].apply(extraer_primer_nombre)
+                
+                # Asegurar formato de texto limpio en DNI, Celular y Mail
+                df_deudores['dni'] = df_deudores['dni'].astype(str).str.strip().str.replace('.0', '', regex=False)
+                df_deudores['celular'] = df_deudores['celular'].astype(str).str.strip().str.replace('.0', '', regex=False)
+                df_deudores['email'] = df_deudores['email'].astype(str).str.strip()
+                
+                # Seleccionar exclusivamente las columnas requeridas para el reporte final
+                df_final = df_deudores[['dni', 'nombre', 'email', 'celular']].drop_duplicates()
+                
+                st.divider()
+                
+                # --- GENERACIÓN Y DESCARGA ---
+                if not df_final.empty:
+                    total_filas = len(df_final)
+                    st.success(f"✅ Se detectaron {total_filas} alumnos que adeudan las tareas seleccionadas.")
+                    
+                    nombre_archivo_salida = "base_deudores_submissions.xlsx"
+                    
+                    # Generar Excel en memoria
+                    output = io.BytesIO()
+                    with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
+                        df_final.to_excel(writer, index=False)
+                    
+                    st.download_button(
+                        label=f"📥 Descargar {nombre_archivo_salida}", 
+                        data=output.getvalue(), 
+                        file_name=nombre_archivo_salida,
+                        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                        key=f"btn_descarga_{st.session_state.count}"
+                    )
+                    
+                    st.write("**Vista previa de los alumnos deudores (Primeras 10 filas):**")
+                    st.dataframe(df_final.head(10))
+                else:
+                    st.info("🎉 ¡Buenas noticias! No se encontraron alumnos deudores con los criterios seleccionados.")
+            else:
+                st.warning("⚠️ Selecciona al menos una materia y una actividad para calcular la base de deudores.")
 
         st.divider()
         if st.button("➕ Realizar nueva carga", type="primary", on_click=reiniciar_aplicacion):
             pass
 
     except Exception as e:
-        st.error(f"Error: {e}")
+        st.error(f"Ocurrió un error al procesar los archivos: {e}")
