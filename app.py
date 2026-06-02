@@ -134,7 +134,7 @@ if archivo_csv and archivo_xlsx:
             elif not cols_base_req.issubset(df_base.columns):
                 st.error(f"La base debe contener las columnas: {cols_base_req}")
             else:
-                # Estandarizar identificadores a string (LÍNEAS CORTADAS PARA PREVENIR ERRORES)
+                # Estandarizar identificadores a string
                 df_csv['canvas user id'] = df_csv['canvas user id'].astype(str)
                 df_csv['canvas user id'] = df_csv['canvas user id'].str.strip()
                 df_csv['canvas user id'] = df_csv['canvas user id'].str.replace('.0', '', regex=False)
@@ -178,7 +178,6 @@ if archivo_csv and archivo_xlsx:
                     if lista_deudores_acumulados:
                         df_final_deudores = pd.concat(lista_deudores_acumulados, ignore_index=True)
                         
-                        # Formateos individuales seguros y en líneas cortas
                         df_final_deudores['nombre'] = df_final_deudores['nombres'].apply(extraer_primer_nombre)
                         df_final_deudores['dni'] = df_final_deudores['dni'].astype(str).str.strip().str.replace('.0', '', regex=False)
                         df_final_deudores['celular'] = df_final_deudores['celular'].astype(str).str.strip().str.replace('.0', '', regex=False)
@@ -189,7 +188,6 @@ if archivo_csv and archivo_xlsx:
                     else:
                         df_final = pd.DataFrame()
                         
-                    # Descarga dinámica para Submissions sin errores de sintaxis
                     if not df_final.empty:
                         st.success(f"✅ Se detectaron {len(df_final)} registros de deudas.")
                         output_sub = io.BytesIO()
@@ -211,18 +209,20 @@ if archivo_csv and archivo_xlsx:
 
         # --- LÓGICA OPCIÓN 2: BASE PARA HUBSPOT ---
         elif opcion_base == "Base para HubSpot":
-            df_csv = df_csv[df_csv['student'].astype(str).str.contains('Points Possible|read only', case=False, na=False) == False]
+            # Filtrar filas de Canvas que no corresponden a estudiantes
+            c_stud = df_csv['student'].astype(str)
+            m_filtro = c_stud.str.contains('Points Possible|read only', case=False, na=False)
+            df_csv = df_csv[~m_filtro]
             
-            # Buscar el identificador de login
             col_login = [c for c in df_csv.columns if 'login id' in c or 'sis login id' in c]
             if not col_login or 'dni' not in df_base.columns:
                 st.error("Verifica que el CSV tenga 'SIS Login ID' o 'Login ID' y la base posea la columna 'dni'.")
             else:
-                login_key = col_login[0]
-                df_csv[login_key] = df_csv[login_key].astype(str).str.strip().str.replace('.0', '', regex=False)
+                l_key = col_login[0]
+                df_csv[l_key] = df_csv[l_key].astype(str).str.strip().str.replace('.0', '', regex=False)
                 df_base['dni'] = df_base['dni'].astype(str).str.strip().str.replace('.0', '', regex=False)
                 
-                df_unido = pd.merge(df_csv, df_base[['dni', 'email']], left_on=login_key, right_on="dni", how="inner")
+                df_unido = pd.merge(df_csv, df_base[['dni', 'email']], left_on=l_key, right_on="dni", how="inner")
                 df_final = df_unido[['email']].drop_duplicates()
                 
                 if not df_final.empty:
@@ -244,4 +244,11 @@ if archivo_csv and archivo_xlsx:
 
         # --- LÓGICA OPCIÓN 3: BASE PARA WHATSAPP ---
         elif opcion_base == "Base para Whatsapp":
-            df_csv = df_csv
+            # Filtrar filas de texto de control en Canvas
+            c_stud = df_csv['student'].astype(str)
+            m_filtro = c_stud.str.contains('Points|Possible', case=False, na=False)
+            df_csv = df_csv[~m_filtro]
+            
+            col_login = [c for c in df_csv.columns if 'login id' in c or 'sis login id' in c]
+            if not col_login or 'student' not in df_csv.columns:
+                st.error("El CSV
