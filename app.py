@@ -134,9 +134,14 @@ if archivo_csv and archivo_xlsx:
             elif not cols_base_req.issubset(df_base.columns):
                 st.error(f"La base debe contener las columnas: {cols_base_req}")
             else:
-                # Estandarizar identificadores a string
-                df_csv['canvas user id'] = df_csv['canvas user id'].astype(str).str.strip().str.replace('.0', '', regex=False)
-                df_base['canvas_id'] = df_base['canvas_id'].astype(str).str.strip().str.replace('.0', '', regex=False)
+                # Estandarizar identificadores a string (LÍNEAS CORTADAS PARA PREVENIR ERRORES)
+                df_csv['canvas user id'] = df_csv['canvas user id'].astype(str)
+                df_csv['canvas user id'] = df_csv['canvas user id'].str.strip()
+                df_csv['canvas user id'] = df_csv['canvas user id'].str.replace('.0', '', regex=False)
+                
+                df_base['canvas_id'] = df_base['canvas_id'].astype(str)
+                df_base['canvas_id'] = df_base['canvas_id'].str.strip()
+                df_base['canvas_id'] = df_base['canvas_id'].str.replace('.0', '', regex=False)
                 
                 df_csv['actividad_filtro'] = df_csv['assignment name'].apply(normalizar_actividad)
                 
@@ -172,4 +177,71 @@ if archivo_csv and archivo_xlsx:
                     
                     if lista_deudores_acumulados:
                         df_final_deudores = pd.concat(lista_deudores_acumulados, ignore_index=True)
-                        df_final_deudores['nombre'] = df_final_deudores
+                        
+                        # Formateos individuales seguros y en líneas cortas
+                        df_final_deudores['nombre'] = df_final_deudores['nombres'].apply(extraer_primer_nombre)
+                        df_final_deudores['dni'] = df_final_deudores['dni'].astype(str).str.strip().str.replace('.0', '', regex=False)
+                        df_final_deudores['celular'] = df_final_deudores['celular'].astype(str).str.strip().str.replace('.0', '', regex=False)
+                        df_final_deudores['email'] = df_final_deudores['email'].astype(str).str.strip()
+                        
+                        columnas_salida = ['dni', 'nombre', 'email', 'celular', 'materia']
+                        df_final = df_final_deudores[columnas_salida].drop_duplicates()
+                    else:
+                        df_final = pd.DataFrame()
+                        
+                    # Descarga dinámica para Submissions sin errores de sintaxis
+                    if not df_final.empty:
+                        st.success(f"✅ Se detectaron {len(df_final)} registros de deudas.")
+                        output_sub = io.BytesIO()
+                        with pd.ExcelWriter(output_sub, engine='xlsxwriter') as writer_sub:
+                            df_final.to_excel(writer_sub, index=False)
+                        
+                        st.download_button(
+                            label="📥 Descargar base_deudores_activos.xlsx",
+                            data=output_sub.getvalue(),
+                            file_name="base_deudores_activos.xlsx",
+                            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                            key=f"btn_sub_{st.session_state.count}"
+                        )
+                        st.dataframe(df_final.head(10))
+                    else:
+                        st.info("🎉 ¡Perfecto! No se encontraron alumnos cursando que deban esas actividades.")
+                else:
+                    st.warning("⚠️ Por favor, selecciona al menos una actividad.")
+
+        # --- LÓGICA OPCIÓN 2: BASE PARA HUBSPOT ---
+        elif opcion_base == "Base para HubSpot":
+            df_csv = df_csv[df_csv['student'].astype(str).str.contains('Points Possible|read only', case=False, na=False) == False]
+            
+            # Buscar el identificador de login
+            col_login = [c for c in df_csv.columns if 'login id' in c or 'sis login id' in c]
+            if not col_login or 'dni' not in df_base.columns:
+                st.error("Verifica que el CSV tenga 'SIS Login ID' o 'Login ID' y la base posea la columna 'dni'.")
+            else:
+                login_key = col_login[0]
+                df_csv[login_key] = df_csv[login_key].astype(str).str.strip().str.replace('.0', '', regex=False)
+                df_base['dni'] = df_base['dni'].astype(str).str.strip().str.replace('.0', '', regex=False)
+                
+                df_unido = pd.merge(df_csv, df_base[['dni', 'email']], left_on=login_key, right_on="dni", how="inner")
+                df_final = df_unido[['email']].drop_duplicates()
+                
+                if not df_final.empty:
+                    st.success(f"✅ Se procesaron {len(df_final)} registros para HubSpot.")
+                    output_hub = io.BytesIO()
+                    with pd.ExcelWriter(output_hub, engine='xlsxwriter') as writer_hub:
+                        df_final.to_excel(writer_hub, index=False, header=True)
+                    
+                    st.download_button(
+                        label=f"📥 Descargar {materia_limpia}-{fecha}-HUB.xlsx",
+                        data=output_hub.getvalue(),
+                        file_name=f"{materia_limpia}-{fecha}-HUB.xlsx",
+                        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                        key=f"btn_hub_{st.session_state.count}"
+                    )
+                    st.dataframe(df_final.head(10))
+                else:
+                    st.warning("⚠️ No se encontraron registros coincidentes para exportar.")
+
+        # --- LÓGICA OPCIÓN 3: BASE PARA WHATSAPP ---
+        elif opcion_base == "Base para Whatsapp":
+            df_csv = df_csv
