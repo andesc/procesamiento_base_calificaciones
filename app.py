@@ -184,4 +184,5 @@ if archivo_csv and archivo_xlsx:
                     # Descarga dinámica para Submissions
                     if not df_final.empty:
                         st.success(f"✅ Se detectaron {len(df_final)} registros de deudas.")
-                        output = io
+                        output = io.BytesIO()
+                        with pd.ExcelWriter(output, engine='xlsxwriter') as
