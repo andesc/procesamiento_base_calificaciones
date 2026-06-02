@@ -172,17 +172,4 @@ if archivo_csv and archivo_xlsx:
                     
                     if lista_deudores_acumulados:
                         df_final_deudores = pd.concat(lista_deudores_acumulados, ignore_index=True)
-                        df_final_deudores['nombre'] = df_final_deudores['nombres'].apply(extraer_primer_nombre)
-                        df_final_deudores['dni'] = df_final_deudores['dni'].astype(str).str.strip().str.replace('.0', '', regex=False)
-                        df_final_deudores['celular'] = df_final_deudores['celular'].astype(str).str.strip().str.replace('.0', '', regex=False)
-                        df_final_deudores['email'] = df_final_deudores['email'].astype(str).str.strip()
-                        
-                        df_final = df_final_deudores[['dni', 'nombre', 'email', 'celular', 'materia']].drop_duplicates()
-                    else:
-                        df_final = pd.DataFrame()
-                        
-                    # Descarga dinámica para Submissions
-                    if not df_final.empty:
-                        st.success(f"✅ Se detectaron {len(df_final)} registros de deudas.")
-                        output = io.BytesIO()
-                        with pd.ExcelWriter(output, engine='xlsxwriter') as
+                        df_final_deudores['nombre'] = df_final_deudores
