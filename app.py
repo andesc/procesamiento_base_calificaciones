@@ -136,4 +136,52 @@ if archivo_csv and archivo_xlsx:
             else:
                 # Estandarizar identificadores a string
                 df_csv['canvas user id'] = df_csv['canvas user id'].astype(str).str.strip().str.replace('.0', '', regex=False)
-                df_base['canvas_id'] = df_base
+                df_base['canvas_id'] = df_base['canvas_id'].astype(str).str.strip().str.replace('.0', '', regex=False)
+                
+                df_csv['actividad_filtro'] = df_csv['assignment name'].apply(normalizar_actividad)
+                
+                st.divider()
+                st.markdown("### 🔍 Configuración de Filtros de Deuda")
+                
+                actividades_disponibles = ["API 1", "API 2", "API 3", "API 4", "AE 1", "AE 2", "AE 3", "AE 4", "PEF"]
+                actividades_seleccionadas = st.multiselect("1. Selecciona la/s Actividad/es que deseas controlar (Obligatorio):", options=actividades_disponibles)
+                
+                materias_disponibles = sorted(df_csv['course name'].dropna().unique())
+                materias_seleccionadas = st.multiselect("2. Selecciona la/s Materia/s a evaluar (Opcional - Vacío evalúa todas):", options=materias_disponibles)
+                
+                if actividades_seleccionadas:
+                    materias_a_procesar = materias_seleccionadas if materias_seleccionadas else materias_disponibles
+                    lista_deudores_acumulados = []
+                    
+                    for materia in materias_a_procesar:
+                        alumnos_cursando = df_csv[df_csv['course name'] == materia]['canvas user id'].unique()
+                        if len(alumnos_cursando) == 0:
+                            continue
+                            
+                        alumnos_con_entrega = df_csv[
+                            (df_csv['course name'] == materia) & 
+                            (df_csv['actividad_filtro'].isin(actividades_seleccionadas))
+                        ]['canvas user id'].unique()
+                        
+                        ids_deudores = set(alumnos_cursando) - set(alumnos_con_entrega)
+                        
+                        if ids_deudores:
+                            df_deudores_materia = df_base[df_base['canvas_id'].isin(ids_deudores)].copy()
+                            df_deudores_materia['materia'] = materia
+                            lista_deudores_acumulados.append(df_deudores_materia)
+                    
+                    if lista_deudores_acumulados:
+                        df_final_deudores = pd.concat(lista_deudores_acumulados, ignore_index=True)
+                        df_final_deudores['nombre'] = df_final_deudores['nombres'].apply(extraer_primer_nombre)
+                        df_final_deudores['dni'] = df_final_deudores['dni'].astype(str).str.strip().str.replace('.0', '', regex=False)
+                        df_final_deudores['celular'] = df_final_deudores['celular'].astype(str).str.strip().str.replace('.0', '', regex=False)
+                        df_final_deudores['email'] = df_final_deudores['email'].astype(str).str.strip()
+                        
+                        df_final = df_final_deudores[['dni', 'nombre', 'email', 'celular', 'materia']].drop_duplicates()
+                    else:
+                        df_final = pd.DataFrame()
+                        
+                    # Descarga dinámica para Submissions
+                    if not df_final.empty:
+                        st.success(f"✅ Se detectaron {len(df_final)} registros de deudas.")
+                        output = io
