@@ -35,6 +35,35 @@ def normalizar_id(valor):
     s = str(valor).split('.')[0].strip()
     return s.replace(',', '')
 
+def homologar_actividad(nombre_tarea):
+    """Normaliza las variaciones de nombres de Canvas a un estándar limpio."""
+    if pd.isna(nombre_tarea):
+        return "OTRO"
+    
+    n = str(nombre_tarea).upper().strip()
+    
+    # Criterios para APIs (API 1, API 2, etc.)
+    if "API1" in n or "API 1" in n or "AP1" in n or "AI1" in n:
+        return "API 1"
+    if "API2" in n or "API 2" in n or "AP2" in n or "AI2" in n:
+        return "API 2"
+    if "API3" in n or "API 3" in n or "AP3" in n or "AI3" in n:
+        return "API 3"
+    if "API4" in n or "API 4" in n or "AP4" in n or "AI4" in n:
+        return "API 4"
+        
+    # Criterios para AEs (AE 1, AE 2, etc.)
+    if "AE1" in n or "AE 1" in n:
+        return "AE 1"
+    if "AE2" in n or "AE 2" in n:
+        return "AE 2"
+    if "AE3" in n or "AE 3" in n:
+        return "AE 3"
+    if "AE4" in n or "AE 4" in n:
+        return "AE 4"
+        
+    return "OTRO"
+
 # --- INICIALIZACIÓN DE ESTADO ---
 if 'count' not in st.session_state:
     st.session_state.count = 0
@@ -111,9 +140,12 @@ if archivo_csv and archivo_xlsx:
             df_csv.columns = cols_csv_lower
             df_csv = df_csv.dropna(subset=['user name', 'sis user id'])
             
-            # Restauramos filtros avanzados y agrupaciones agrupadas por materia y actividad
+            # --- NUEVO: HOMOLOGACIÓN DE ACTIVIDADES DE FORMA INMEDIATA ---
+            df_csv['actividad_limpia'] = df_csv['assignment name'].apply(homologar_actividad)
+            
             st.markdown("### 🎛️ Filtros Avanzados de Segmentación")
             
+            # Filtro por Materias
             materias_disponibles = sorted(df_csv['course name'].dropna().unique())
             materias_seleccionadas = st.multiselect(
                 "1. Filtrar por Materias (Deja vacío para seleccionar todas):", 
@@ -121,14 +153,18 @@ if archivo_csv and archivo_xlsx:
                 default=[]
             )
             
-            # Filtrar dataframe temporal según materias seleccionadas para actualizar actividades válidas
             if materias_seleccionadas:
                 df_filtrado_mat = df_csv[df_csv['course name'].isin(materias_seleccionadas)]
             else:
                 df_filtrado_mat = df_csv
                 
-            actividades_disponibles = sorted(df_filtrado_mat['assignment name'].dropna().unique())
-            actividad_objetivo = st.selectbox("2. Selecciona la actividad a reclamar:", actividades_disponibles)
+            # Seleccionar Actividad (ahora limpia y agrupada, quitando "OTRO")
+            actividades_validas = [act for act in ["API 1", "API 2", "API 3", "API 4", "AE 1", "AE 2", "AE 3", "AE 4"] if act in df_filtrado_mat['actividad_limpia'].unique()]
+            
+            if not actividades_validas:
+                actividades_validas = sorted([a for a in df_filtrado_mat['actividad_limpia'].unique() if a != "OTRO"])
+
+            actividad_objetivo = st.selectbox("2. Selecciona la actividad a reclamar:", actividades_validas)
             
             if st.button("🔍 Filtrar y Calcular Deudores", type="primary"):
                 # Normalización de IDs para el cruce exacto
@@ -138,102 +174,9 @@ if archivo_csv and archivo_xlsx:
                 # Llave única Alumno + Materia para evitar falsos cumplidores en materias paralelas
                 df_filtrado_mat['llave_alumno_materia'] = df_filtrado_mat['id_match'] + "_" + df_filtrado_mat['course name'].str.strip().str.upper()
                 
-                # Universo de análisis
+                # Universo de análisis bajo las materias seleccionadas
                 universo = df_filtrado_mat[['id_match', 'user name', 'course name', 'llave_alumno_materia']].drop_duplicates()
                 
-                # Alumnos con entregas válidas
+                # Alumnos con entregas válidas en la actividad objetivo (usando la columna limpia)
                 entregaron = df_filtrado_mat[
-                    (df_filtrado_mat['assignment name'] == actividad_objetivo) & 
-                    (df_filtrado_mat['workflow state'].isin(['submitted', 'graded']))
-                ]
-                llaves_entregaron = entregaron['llave_alumno_materia'].unique()
-                
-                # Identificación matemática precisa por combinación
-                deudores = universo[~universo['llave_alumno_materia'].isin(llaves_entregaron)].copy()
-                
-                # Merge definitivo con Excel para capturar el DNI real
-                df_final = pd.merge(deudores, df_xlsx[['id_match', 'dni']], on='id_match', how='inner')
-                
-                # Formateo y limpieza requerida
-                df_final['nombre'] = df_final['user name'].apply(extraer_y_formatear_nombre)
-                df_final['materia'] = df_final['course name'].apply(limpiar_texto)
-                
-                st.session_state.df_resultado = df_final[['dni', 'nombre', 'materia']].drop_duplicates()
-                st.session_state.nombre_base = f"Faltan_{actividad_objetivo.replace(' ', '_')}"
-                st.session_state.procesado = True
-
-        # --- CASO B: REPORTE CALIFICACIONES ESTÁNDAR ---
-        else:
-            st.info("📂 **Reporte de Calificaciones estándar detectado automáticamente.**")
-            
-            if st.button("🔍 Generar Base para Descargar", type="primary"):
-                # Limpieza de filas técnicas de Canvas
-                df_csv = df_csv[df_csv['Student'].str.contains('Points|Possible', case=False, na=False) == False]
-                
-                df_xlsx['id_match'] = df_xlsx['id_alumno'].apply(normalizar_id)
-                df_csv['id_match'] = df_csv['SIS Login ID'].apply(normalizar_id)
-                
-                # Cruce con Excel
-                df_final = pd.merge(df_csv, df_xlsx[['id_match', 'dni']], on='id_match', how='inner')
-                df_final['nombre'] = df_final['Student'].apply(extraer_y_formatear_nombre)
-                
-                # Extracción de la materia usando el nombre original del archivo
-                try:
-                    materia_archivo = archivo_csv.name.split("Calificaciones-")[1].split(".")[0].replace("_", " ")
-                except:
-                    materia_archivo = "Materia"
-                
-                df_final['materia'] = limpiar_texto(materia_archivo)
-                
-                st.session_state.df_resultado = df_final[['dni', 'nombre', 'materia']].drop_duplicates()
-                st.session_state.nombre_base = f"Base_{materia_archivo.replace(' ', '_')}"
-                st.session_state.procesado = True
-
-        # --- SECCIÓN DINÁMICA DE DESCARGA (CON PARTICIÓN MÁX 100 FILAS) ---
-        if st.session_state.procesado:
-            df_res = st.session_state.df_resultado
-            total_filas = len(df_res)
-            
-            if not df_res.empty:
-                st.success(f"✅ ¡Proceso completado! Se detectaron {total_filas} registros que cumplen las condiciones.")
-                
-                # Parámetros según el destino seleccionado por interfaz
-                header_bool = True if opcion_base == "Base para HubSpot" else False
-                suffix = "HUB" if opcion_base == "Base para HubSpot" else "WSP"
-                
-                st.write("### 📥 Descargar Archivos Excel")
-                grid_descargas = st.columns(3)
-                
-                for i in range(0, total_filas, 100):
-                    chunk = df_res.iloc[i : i + 100]
-                    parte = (i // 100) + 1
-                    
-                    # Nomenclatura solicitada (_2, _3 para extras)
-                    nombre_archivo = f"{st.session_state.nombre_base}-{suffix}.xlsx" if parte == 1 else f"{st.session_state.nombre_base}-{suffix}_{parte}.xlsx"
-                    
-                    output = io.BytesIO()
-                    with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
-                        chunk.to_excel(writer, index=False, header=header_bool)
-                    
-                    with grid_descargas[i//100 % 3]:
-                        st.download_button(
-                            label=f"📥 Parte {parte} ({len(chunk)} filas)",
-                            data=output.getvalue(),
-                            file_name=nombre_archivo,
-                            key=f"btn_dl_{i}_{st.session_state.count}",
-                            type="primary"
-                        )
-                
-                st.write("### 👁️ Vista previa de los datos:")
-                st.dataframe(df_res)
-            else:
-                st.warning("⚠️ El filtro seleccionado no arrojó ningún alumno deudor. Verifica los criterios.")
-
-    except Exception as e:
-        st.error(f"Error crítico durante el análisis: {e}")
-
-# --- RESETEO CONTROLADO ---
-st.divider()
-if st.button("➕ Limpiar Pantalla y Nueva Carga", type="secondary"):
-    reiniciar_aplicacion()
-    st.rerun()
+                    (df_filtrado_mat['actividad_limpia'] == actividad_objetivo
