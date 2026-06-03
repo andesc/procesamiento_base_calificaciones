@@ -12,12 +12,12 @@ def reiniciar_aplicacion():
     st.session_state.procesado = False
 
 def limpiar_texto(texto):
-    """Elimina tildes, convierte Ñ en ni y normaliza texto."""
+    """Elimina tildes, convierte Ñ en ni, quita espacios extras y pasa a mayúsculas para cruces."""
     if not isinstance(texto, str):
-        return str(texto)
+        return str(texto).strip().upper()
     texto = texto.replace('ñ', 'ni').replace('Ñ', 'Ni')
     trans_tab = str.maketrans("áéíóúÁÉÍÓÚ", "aeiouAEIOU")
-    return texto.translate(trans_tab)
+    return texto.translate(trans_tab).strip().upper()
 
 def extraer_y_formatear_nombre(celda):
     """Extrae el primer nombre del formato 'Apellido, Nombre' y lo normaliza."""
@@ -119,13 +119,15 @@ if archivo_csv and archivo_xlsx:
             
             df_csv['actividad_limpia'] = df_csv['assignment name'].apply(homologar_actividad)
             
-            st.markdown("### 🎛️ Filtros Avanzados de Segmentación")
-            
+            # Normalizamos nombres de materia originales para mostrarlos limpios en la interfaz
             if 'materia' in df_xlsx.columns:
-                materias_disponibles = sorted(df_xlsx['materia'].dropna().unique())
+                df_xlsx['materia_limpia_filtro'] = df_xlsx['materia'].astype(str).str.strip().str.upper()
+                materias_disponibles = sorted(df_xlsx['materia_limpia_filtro'].dropna().unique())
             else:
-                materias_disponibles = sorted(df_csv['course name'].dropna().unique())
+                df_csv['materia_limpia_filtro'] = df_csv['course name'].astype(str).str.strip().str.upper()
+                materias_disponibles = sorted(df_csv['materia_limpia_filtro'].dropna().unique())
                 
+            st.markdown("### 🎛️ Filtros Avanzados de Segmentación")
             materias_seleccionadas = st.multiselect(
                 "1. Filtrar por Materias (Deja vacío para seleccionar todas):", 
                 materias_disponibles, 
@@ -139,9 +141,10 @@ if archivo_csv and archivo_xlsx:
                 df_xlsx['id_match'] = df_xlsx['id_alumno'].apply(normalizar_id)
                 df_csv['id_match'] = df_csv['sis user id'].apply(normalizar_id)
                 
+                # Filtrar el Universo Base (Excel)
                 df_universo = df_xlsx.copy()
                 if materias_seleccionadas:
-                    df_universo = df_universo[df_universo['materia'].isin(materias_seleccionadas)]
+                    df_universo = df_universo[df_universo['materia_limpia_filtro'].isin(materias_seleccionadas)]
                 
                 if 'nombres' in df_universo.columns:
                     col_nombre_origen = 'nombres'
@@ -150,20 +153,26 @@ if archivo_csv and archivo_xlsx:
                 else:
                     col_nombre_origen = df_universo.columns[2]
                 
-                df_universo['llave_alumno_materia'] = df_universo['id_match'] + "_" + df_universo['materia'].str.strip().str.upper()
+                # NUEVO: Aseguramos limpieza estricta (sin tildes) en la llave de ambos dataframes
+                df_universo['materia_key'] = df_universo['materia'].apply(limpiar_texto)
+                df_universo['llave_alumno_materia'] = df_universo['id_match'] + "_" + df_universo['materia_key']
                 
                 entregaron = df_csv[
                     (df_csv['actividad_limpia'] == actividad_objetivo) & 
                     (df_csv['workflow state'].isin(['submitted', 'graded']))
                 ].copy()
                 
-                entregaron['llave_alumno_materia'] = entregaron['id_match'] + "_" + entregaron['course name'].str.strip().str.upper()
+                entregaron['materia_key'] = entregaron['course name'].apply(limpiar_texto)
+                entregaron['llave_alumno_materia'] = entregaron['id_match'] + "_" + entregaron['materia_key']
                 llaves_entregaron = entregaron['llave_alumno_materia'].unique()
                 
+                # Exclusión exacta e inmune a tildes o variaciones tipográficas
                 df_deudores = df_universo[~df_universo['llave_alumno_materia'].isin(llaves_entregaron)].copy()
                 
+                # Formateo visual final de salida
                 df_deudores['nombre_final'] = df_deudores[col_nombre_origen].apply(extraer_y_formatear_nombre)
-                df_deudores['materia_final'] = df_deudores['materia'].apply(limpiar_texto)
+                # Conservamos el nombre original de la materia pero limpio estéticamente
+                df_deudores['materia_final'] = df_deudores['materia'].astype(str).str.strip().str.upper()
                 
                 st.session_state.df_resultado = df_deudores[['dni', 'nombre_final', 'materia_final']].rename(
                     columns={'nombre_final': 'nombre', 'materia_final': 'materia'}
@@ -189,27 +198,25 @@ if archivo_csv and archivo_xlsx:
                 except:
                     materia_archivo = "Materia"
                 
-                df_final['materia'] = limpiar_texto(materia_archivo)
+                df_final['materia'] = materia_archivo.strip().upper()
                 st.session_state.df_resultado = df_final[['dni', 'nombre', 'materia']].drop_duplicates()
                 st.session_state.nombre_base = f"Base_{materia_archivo.replace(' ', '_')}"
                 st.session_state.procesado = True
 
-        # --- SECCIÓN CRÍTICA CORREGIDA: LOGICA DE DESCARGA DIFERENCIADA ---
+        # --- SECCIÓN DE DESCARGA DIFERENCIADA ---
         if st.session_state.procesado:
             df_res = st.session_state.df_resultado
             total_filas = len(df_res)
             
             if not df_res.empty:
-                st.success(f"✅ ¡Proceso completado! Se detectaron {total_filas} registros deudores.")
+                st.success(f"✅ ¡Proceso completado con éxito! Se detectaron {total_filas} registros deudores reales.")
                 st.write("### 📥 Descargar Archivos Excel")
                 
-                # --- OPCIÓN 1: BASE PARA HUBSPOT (UN SOLO ARCHIVO CON CABECERA) ---
                 if opcion_base == "Base para HubSpot":
                     nombre_archivo = f"{st.session_state.nombre_base}-HUB.xlsx"
-                    
                     output = io.BytesIO()
                     with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
-                        df_res.to_excel(writer, index=False, header=True) # Incluye encabezados
+                        df_res.to_excel(writer, index=False, header=True)
                     
                     st.download_button(
                         label=f"📥 Descargar Base Completa para HubSpot ({total_filas} filas)",
@@ -218,19 +225,16 @@ if archivo_csv and archivo_xlsx:
                         key=f"btn_hub_{st.session_state.count}",
                         type="primary"
                     )
-                
-                # --- OPCIÓN 2: BASE PARA WHATSAPP (PARTICIÓN DE 100 FILAS SIN CABECERA) ---
                 else:
                     grid_descargas = st.columns(3)
                     for i in range(0, total_filas, 100):
                         chunk = df_res.iloc[i : i + 100]
                         parte = (i // 100) + 1
-                        
                         nombre_archivo = f"{st.session_state.nombre_base}-WSP.xlsx" if parte == 1 else f"{st.session_state.nombre_base}-WSP_{parte}.xlsx"
                         
                         output = io.BytesIO()
                         with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
-                            chunk.to_excel(writer, index=False, header=False) # Sin encabezados
+                            chunk.to_excel(writer, index=False, header=False)
                         
                         with grid_descargas[i//100 % 3]:
                             st.download_button(
@@ -244,7 +248,7 @@ if archivo_csv and archivo_xlsx:
                 st.write("### 👁️ Vista previa de los datos:")
                 st.dataframe(df_res)
             else:
-                st.warning("⚠️ No se encontraron deudores.")
+                st.warning("⚠️ No se encontraron deudores con los criterios seleccionados.")
 
     except Exception as e:
         st.error(f"Error crítico durante el análisis: {e}")
