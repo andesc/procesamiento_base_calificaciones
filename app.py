@@ -1,7 +1,6 @@
 import streamlit as st
 import pandas as pd
 import io
-import os
 
 # --- CONFIGURACIÓN DE LA PÁGINA ---
 st.set_page_config(page_title="Procesamiento Base Calificaciones", page_icon="📧")
@@ -12,12 +11,13 @@ def reiniciar_aplicacion():
     st.session_state.procesado = False
 
 def limpiar_texto(texto):
-    """Elimina tildes, convierte Ñ en ni, quita espacios extras y pasa a mayúsculas."""
-    if not isinstance(texto, str):
-        return str(texto).strip().upper()
+    """Normaliza de forma estricta los nombres de las materias para el cruce."""
+    if pd.isna(texto):
+        return ""
+    texto = str(texto).upper().strip()
     texto = texto.replace('ñ', 'ni').replace('Ñ', 'Ni')
     trans_tab = str.maketrans("áéíóúÁÉÍÓÚ", "aeiouAEIOU")
-    return texto.translate(trans_tab).strip().upper()
+    return texto.translate(trans_tab)
 
 def extraer_y_formatear_nombre(celda):
     """Extrae el primer nombre del formato 'Apellido, Nombre' y lo normaliza."""
@@ -30,13 +30,13 @@ def extraer_y_formatear_nombre(celda):
     return primer_nombre.capitalize()
 
 def normalizar_id(valor):
-    """Limpia puntos, decimales y espacios para cruces exactos."""
+    """Asegura que los IDs sean strings numéricos limpios sin decimales."""
     if pd.isna(valor): return ""
     s = str(valor).split('.')[0].strip()
     return s.replace(',', '')
 
 def homologar_actividad(nombre_tarea):
-    """Normaliza las variaciones de nombres de Canvas a un estándar limpio."""
+    """Estandariza las variaciones de nombres que vienen de Canvas."""
     if pd.isna(nombre_tarea):
         return "OTRO"
     
@@ -79,20 +79,7 @@ opcion_base = st.radio(
 st.divider()
 
 st.markdown("### 📥 Carga de archivos")
-with st.expander("1 - Obtené la base necesaria. Instrucciones aquí."):
-    if opcion_base == "Base para HubSpot":
-        st.markdown("""
-        1. **Obtener el primer archivo (CSV):**
-            * Ingresa a Canvas > Reporte de entregas (Submissions) o Calificaciones.
-        2. **Obtener el segundo archivo (XLSX):**
-            * Asegúrate de incluir los encabezados **id_alumno**, **dni** y **nombres** (o student).
-        """)
-    else:
-        st.markdown("""
-        * Sube ambos archivos requeridos para realizar el cruce de deudores absolutos.
-        """)
 
-# --- CARGA DE ARCHIVOS ---
 col1, col2 = st.columns(2)
 with col1:
     archivo_csv = st.file_uploader("1. Reporte de Canvas (CSV)", type=["csv"], key=f"csv_{st.session_state.count}")
@@ -105,28 +92,31 @@ if archivo_csv and archivo_xlsx:
         df_csv = pd.read_csv(archivo_csv, sep=None, engine='python', on_bad_lines='skip')
         df_xlsx = pd.read_excel(archivo_xlsx)
         
+        # Limpieza estandarizada de columnas
         df_csv.columns = df_csv.columns.str.strip()
         cols_csv_lower = [c.lower() for c in df_csv.columns]
         df_xlsx.columns = df_xlsx.columns.str.strip().str.lower()
         
         es_submissions = 'sis user id' in cols_csv_lower and 'assignment name' in cols_csv_lower
 
-        # --- CASO A: REPORTE SUBMISSIONS (ENTREGAS) ---
         if es_submissions:
             st.success("📂 **Reporte de Entregas (Submissions) detectado automáticamente.**")
             df_csv.columns = cols_csv_lower
             df_csv = df_csv.dropna(subset=['user name', 'sis user id'])
             
+            # Homologación inmediata de actividades
             df_csv['actividad_limpia'] = df_csv['assignment name'].apply(homologar_actividad)
             
-            # Normalizamos nombres de materia para visualización y filtrado
-            if 'materia' in df_xlsx.columns:
-                df_xlsx['materia_limpia_filtro'] = df_xlsx['materia'].astype(str).str.strip().str.upper()
-                materias_disponibles = sorted(df_xlsx['materia_limpia_filtro'].dropna().unique())
-            else:
-                df_csv['materia_limpia_filtro'] = df_csv['course name'].astype(str).str.strip().str.upper()
-                materias_disponibles = sorted(df_csv['materia_limpia_filtro'].dropna().unique())
-                
+            # Normalización de textos de materias en ambos dataframes para el cruce
+            df_xlsx['materia_match'] = df_xlsx['materia'].apply(limpiar_texto)
+            df_csv['materia_match'] = df_csv['course name'].apply(limpiar_texto)
+            
+            # IDs normalizados
+            df_xlsx['id_match'] = df_xlsx['id_alumno'].apply(normalizar_id)
+            df_csv['id_match'] = df_csv['sis user id'].apply(normalizar_id)
+            
+            materias_disponibles = sorted(df_xlsx['materia_match'].dropna().unique())
+            
             st.markdown("### 🎛️ Filtros Avanzados de Segmentación")
             materias_seleccionadas = st.multiselect(
                 "1. Filtrar por Materias (Deja vacío para seleccionar todas):", 
@@ -138,14 +128,13 @@ if archivo_csv and archivo_xlsx:
             actividad_objetivo = st.selectbox("2. Selecciona la actividad a reclamar:", actividades_validas)
             
             if st.button("🔍 Filtrar y Calcular Deudores", type="primary"):
-                df_xlsx['id_match'] = df_xlsx['id_alumno'].apply(normalizar_id)
-                df_csv['id_match'] = df_csv['sis user id'].apply(normalizar_id)
                 
-                # Filtrar Universo Base (Excel)
+                # 1. Filtrar el Universo Base del Excel por las materias seleccionadas
                 df_universo = df_xlsx.copy()
                 if materias_seleccionadas:
-                    df_universo = df_universo[df_universo['materia_limpia_filtro'].isin(materias_seleccionadas)]
+                    df_universo = df_universo[df_universo['materia_match'].isin(materias_seleccionadas)]
                 
+                # Detectar columna de nombre en Excel
                 if 'nombres' in df_universo.columns:
                     col_nombre_origen = 'nombres'
                 elif 'student' in df_universo.columns:
@@ -153,36 +142,41 @@ if archivo_csv and archivo_xlsx:
                 else:
                     col_nombre_origen = df_universo.columns[2]
                 
-                # Llaves compuestas con texto limpio
-                df_universo['materia_key'] = df_universo['materia'].apply(limpiar_texto)
-                df_universo['llave_alumno_materia'] = df_universo['id_match'] + "_" + df_universo['materia_key']
-                
-                # CORRECCIÓN DE ENTRREGAS: Consideramos entregado ÚNICAMENTE si está calificado o enviado formalmente
+                # 2. Filtrar Canvas para quedarnos SOLO con los que SÍ entregaron de forma válida la actividad buscada
                 entregaron = df_csv[
                     (df_csv['actividad_limpia'] == actividad_objetivo) & 
-                    (df_csv['workflow state'].isin(['submitted', 'graded'])) &
-                    (df_csv['submission date'].notna() | df_csv['score'].notna())
-                ].copy()
+                    (df_csv['workflow state'].isin(['submitted', 'graded']))
+                ][['id_match', 'materia_match']].copy()
                 
-                entregaron['materia_key'] = entregaron['course name'].apply(limpiar_texto)
-                entregaron['llave_alumno_materia'] = entregaron['id_match'] + "_" + entregaron['materia_key']
-                llaves_entregaron = entregaron['llave_alumno_materia'].unique()
+                # Marcamos a estos alumnos en Canvas como "entregado = True"
+                entregaron['entregado_canvas'] = True
+                # Eliminamos duplicados en Canvas para evitar que el merge multiplique filas innecesariamente
+                entregaron = entregaron.drop_duplicates(subset=['id_match', 'materia_match'])
                 
-                # Exclusión final estricta
-                df_deudores = df_universo[~df_universo['llave_alumno_materia'].isin(llaves_entregaron)].copy()
+                # 3. CRUCE MATRICIAL PERFECTO (Left Merge por Alumno + Materia)
+                # Esto mantiene las filas duplicadas del alumno si está anotado en dos materias distintas
+                df_cruce = pd.merge(
+                    df_universo, 
+                    entregaron, 
+                    on=['id_match', 'materia_match'], 
+                    how='left'
+                )
                 
-                # Formateo visual
+                # 4. Los deudores reales son aquellos que quedaron con 'entregado_canvas' vacío (NaN)
+                df_deudores = df_cruce[df_cruce['entregado_canvas'].isna()].copy()
+                
+                # Formateo estético final de los campos
                 df_deudores['nombre_final'] = df_deudores[col_nombre_origen].apply(extraer_y_formatear_nombre)
                 df_deudores['materia_final'] = df_deudores['materia'].astype(str).str.strip().str.upper()
                 
+                # Estructuramos el resultado conservando las dos filas si el alumno debe ambas materias
                 st.session_state.df_resultado = df_deudores[['dni', 'nombre_final', 'materia_final']].rename(
                     columns={'nombre_final': 'nombre', 'materia_final': 'materia'}
-                ).drop_duplicates()
+                ).drop_duplicates()  # Solo borra duplicados si se repite DNI + Materia idéntico
                 
                 st.session_state.nombre_base = f"Faltan_{actividad_objetivo.replace(' ', '_')}"
                 st.session_state.procesado = True
 
-        # --- CASO B: REPORTE CALIFICACIONES ESTÁNDAR ---
         else:
             st.info("📂 **Reporte de Calificaciones estándar detectado automáticamente.**")
             if st.button("🔍 Generar Base para Descargar", type="primary"):
