@@ -73,7 +73,7 @@ if 'procesado' not in st.session_state:
     st.session_state.procesado = False
 
 # --- INTERFAZ INICIAL ---
-st.title("🛠️ Herramienta de Tutoría Inteligente")
+st.title("🛠️ Generador de bases")
 opcion_base = st.radio(
     "Selecciona el tipo de base que deseas generar:",
     ["Base para HubSpot", "Base para Whatsapp"],
