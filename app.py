@@ -29,11 +29,16 @@ def extraer_y_formatear_nombre(celda):
     primer_nombre = parte_nombre.split()[0] if parte_nombre.split() else ""
     return primer_nombre.capitalize()
 
-def normalizar_id(valor):
-    """Asegura que los IDs sean strings numéricos limpios sin decimales."""
-    if pd.isna(valor): return ""
-    s = str(valor).split('.')[0].strip()
-    return s.replace(',', '')
+def forzar_id_entero(valor):
+    """Convierte cualquier ID sucio o flotante en un string numérico entero puro."""
+    if pd.isna(valor): 
+        return ""
+    try:
+        # Extrae solo los dígitos numéricos descartando puntos o comas decimales
+        s = str(valor).split('.')[0].strip()
+        return str(int(s))
+    except:
+        return str(valor).strip()
 
 def homologar_actividad(nombre_tarea):
     """Estandariza las variaciones de nombres que vienen de Canvas."""
@@ -107,13 +112,13 @@ if archivo_csv and archivo_xlsx:
             # Homologación inmediata de actividades
             df_csv['actividad_limpia'] = df_csv['assignment name'].apply(homologar_actividad)
             
-            # Normalización de textos de materias en ambos dataframes para el cruce
+            # Normalización estricta de textos de materias en ambos dataframes para el cruce
             df_xlsx['materia_match'] = df_xlsx['materia'].apply(limpiar_texto)
             df_csv['materia_match'] = df_csv['course name'].apply(limpiar_texto)
             
-            # IDs normalizados
-            df_xlsx['id_match'] = df_xlsx['id_alumno'].apply(normalizar_id)
-            df_csv['id_match'] = df_csv['sis user id'].apply(normalizar_id)
+            # NUEVO: Conversión forzada a Entero string para evitar quiebres de formato de ID
+            df_xlsx['id_match'] = df_xlsx['id_alumno'].apply(forzar_id_entero)
+            df_csv['id_match'] = df_csv['sis user id'].apply(forzar_id_entero)
             
             materias_disponibles = sorted(df_xlsx['materia_match'].dropna().unique())
             
@@ -142,19 +147,17 @@ if archivo_csv and archivo_xlsx:
                 else:
                     col_nombre_origen = df_universo.columns[2]
                 
-                # 2. Filtrar Canvas para quedarnos SOLO con los que SÍ entregaron de forma válida la actividad buscada
+                # 2. Filtrar Canvas para quedarnos SOLO con los que SÍ entregaron de forma válida
                 entregaron = df_csv[
                     (df_csv['actividad_limpia'] == actividad_objetivo) & 
                     (df_csv['workflow state'].isin(['submitted', 'graded']))
                 ][['id_match', 'materia_match']].copy()
                 
-                # Marcamos a estos alumnos en Canvas como "entregado = True"
+                # Marcamos a estos alumnos en Canvas como entregados
                 entregaron['entregado_canvas'] = True
-                # Eliminamos duplicados en Canvas para evitar que el merge multiplique filas innecesariamente
                 entregaron = entregaron.drop_duplicates(subset=['id_match', 'materia_match'])
                 
-                # 3. CRUCE MATRICIAL PERFECTO (Left Merge por Alumno + Materia)
-                # Esto mantiene las filas duplicadas del alumno si está anotado en dos materias distintas
+                # 3. CRUCE MATRICIAL POR LEFT JOIN (Mantiene la doble deuda por materia de forma nativa)
                 df_cruce = pd.merge(
                     df_universo, 
                     entregaron, 
@@ -162,17 +165,17 @@ if archivo_csv and archivo_xlsx:
                     how='left'
                 )
                 
-                # 4. Los deudores reales son aquellos que quedaron con 'entregado_canvas' vacío (NaN)
+                # 4. Deudores son quienes no tienen marca de entrega en esa materia específica
                 df_deudores = df_cruce[df_cruce['entregado_canvas'].isna()].copy()
                 
                 # Formateo estético final de los campos
                 df_deudores['nombre_final'] = df_deudores[col_nombre_origen].apply(extraer_y_formatear_nombre)
                 df_deudores['materia_final'] = df_deudores['materia'].astype(str).str.strip().str.upper()
                 
-                # Estructuramos el resultado conservando las dos filas si el alumno debe ambas materias
+                # Estructuramos el resultado conservando deudas múltiples si existen
                 st.session_state.df_resultado = df_deudores[['dni', 'nombre_final', 'materia_final']].rename(
                     columns={'nombre_final': 'nombre', 'materia_final': 'materia'}
-                ).drop_duplicates()  # Solo borra duplicados si se repite DNI + Materia idéntico
+                ).drop_duplicates(subset=['dni', 'materia'])
                 
                 st.session_state.nombre_base = f"Faltan_{actividad_objetivo.replace(' ', '_')}"
                 st.session_state.procesado = True
@@ -182,8 +185,8 @@ if archivo_csv and archivo_xlsx:
             if st.button("🔍 Generar Base para Descargar", type="primary"):
                 df_csv = df_csv[df_csv['Student'].str.contains('Points|Possible', case=False, na=False) == False]
                 
-                df_xlsx['id_match'] = df_xlsx['id_alumno'].apply(normalizar_id)
-                df_csv['id_match'] = df_csv['SIS Login ID'].apply(normalizar_id)
+                df_xlsx['id_match'] = df_xlsx['id_alumno'].apply(forzar_id_entero)
+                df_csv['id_match'] = df_csv['SIS Login ID'].apply(forzar_id_entero)
                 
                 df_final = pd.merge(df_csv, df_xlsx[['id_match', 'dni']], on='id_match', how='inner')
                 df_final['nombre'] = df_final['Student'].apply(extraer_y_formatear_nombre)
