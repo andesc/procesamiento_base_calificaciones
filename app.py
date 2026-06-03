@@ -30,7 +30,7 @@ def extraer_y_formatear_nombre(celda):
     return primer_nombre.capitalize()
 
 def normalizar_id(valor):
-    """Limpia puntos, decimales y espacios para cruces exactos sin romper vinculación."""
+    """Limpia puntos, decimales y espacios para cruces exactos."""
     if pd.isna(valor): return ""
     s = str(valor).split('.')[0].strip()
     return s.replace(',', '')
@@ -42,7 +42,6 @@ def homologar_actividad(nombre_tarea):
     
     n = str(nombre_tarea).upper().strip()
     
-    # Criterios para APIs (API 1, API 2, etc.)
     if "API1" in n or "API 1" in n or "AP1" in n or "AI1" in n:
         return "API 1"
     if "API2" in n or "API 2" in n or "AP2" in n or "AI2" in n:
@@ -52,7 +51,6 @@ def homologar_actividad(nombre_tarea):
     if "API4" in n or "API 4" in n or "AP4" in n or "AI4" in n:
         return "API 4"
         
-    # Criterios para AEs (AE 1, AE 2, etc.)
     if "AE1" in n or "AE 1" in n:
         return "AE 1"
     if "AE2" in n or "AE 2" in n:
@@ -80,58 +78,37 @@ opcion_base = st.radio(
 
 st.divider()
 
-# --- PASOS A SEGUIR (DESPLEGABLE DINÁMICO) ---
 st.markdown("### 📥 Carga de archivos")
 with st.expander("1 - Obtené la base necesaria. Instrucciones aquí."):
     if opcion_base == "Base para HubSpot":
         st.markdown("""
         1. **Obtener el primer archivo (CSV):**
-            * Ingresa a la materia en **Canvas** > **Calificaciones** o descarga el reporte de entregas. 
-            * Aplica los filtros necesarios. 
-            * Selecciona **Exportar** > **Vista actual**. 
-            * ⚠️ **Importante:** No modifiques el nombre del archivo generado.
-
+            * Ingresa a Canvas > Reporte de entregas (Submissions) o Calificaciones.
         2. **Obtener el segundo archivo (XLSX):**
-            * En tu **Base de Invitaciones / Query de Avance**, filtra la materia objetivo.
-            * Asegúrate de incluir los encabezados **id_alumno** y **dni**.
+            * Asegúrate de incluir los encabezados **id_alumno**, **dni** y **nombres** (o student).
         """)
     else:
         st.markdown("""
-        * Ingresa a la materia en **Canvas** > **Calificaciones** o descarga el reporte de entregas. 
-        * Aplica los filtros necesarios. 
-        * Selecciona **Exportar** > **Vista actual**. 
-        * ⚠️ **Importante:** No modifiques el nombre del archivo generado.
+        * Sube ambos archivos requeridos para realizar el cruce de deudores absolutos.
         """)
 
-# --- CARGA DE ARCHIVOS DINÁMICA ---
-if opcion_base == "Base para HubSpot":
-    st.write("Sube los archivos 👇 y luego haz clic en descargar")
-    col1, col2 = st.columns(2)
-    with col1:
-        archivo_csv = st.file_uploader("1. Reporte de Canvas (CSV)", type=["csv"], key=f"csv_{st.session_state.count}")
-    with col2:
-        archivo_xlsx = st.file_uploader("2. Base de Alumnos (XLSX)", type=["xlsx"], key=f"xlsx_{st.session_state.count}")
-else:
-    st.write("Sube el archivo 👇 y luego haz clic en descargar")
-    col1, col2 = st.columns(2)
-    with col1:
-        archivo_csv = st.file_uploader("1. Reporte de Canvas (CSV)", type=["csv"], key=f"csv_wsp_{st.session_state.count}")
-    with col2:
-        archivo_xlsx = st.file_uploader("2. Base de Alumnos (XLSX)", type=["xlsx"], key=f"xlsx_wsp_{st.session_state.count}")
+# --- CARGA DE ARCHIVOS ---
+col1, col2 = st.columns(2)
+with col1:
+    archivo_csv = st.file_uploader("1. Reporte de Canvas (CSV)", type=["csv"], key=f"csv_{st.session_state.count}")
+with col2:
+    archivo_xlsx = st.file_uploader("2. Base de Alumnos / Query Avance (XLSX)", type=["xlsx"], key=f"xlsx_{st.session_state.count}")
 
 # --- PROCESAMIENTO GENERAL ---
 if archivo_csv and archivo_xlsx:
     try:
-        # Lectura robusta inicial
         df_csv = pd.read_csv(archivo_csv, sep=None, engine='python', on_bad_lines='skip')
         df_xlsx = pd.read_excel(archivo_xlsx)
         
-        # Normalización estandarizada de columnas
         df_csv.columns = df_csv.columns.str.strip()
         cols_csv_lower = [c.lower() for c in df_csv.columns]
         df_xlsx.columns = df_xlsx.columns.str.strip().str.lower()
         
-        # Detección del tipo de archivo CSV
         es_submissions = 'sis user id' in cols_csv_lower and 'assignment name' in cols_csv_lower
 
         # --- CASO A: REPORTE SUBMISSIONS (ENTREGAS) ---
@@ -140,135 +117,138 @@ if archivo_csv and archivo_xlsx:
             df_csv.columns = cols_csv_lower
             df_csv = df_csv.dropna(subset=['user name', 'sis user id'])
             
-            # --- NUEVO: HOMOLOGACIÓN DE ACTIVIDADES DE FORMA INMEDIATA ---
             df_csv['actividad_limpia'] = df_csv['assignment name'].apply(homologar_actividad)
             
             st.markdown("### 🎛️ Filtros Avanzados de Segmentación")
             
-            # Filtro por Materias
-            materias_disponibles = sorted(df_csv['course name'].dropna().unique())
+            if 'materia' in df_xlsx.columns:
+                materias_disponibles = sorted(df_xlsx['materia'].dropna().unique())
+            else:
+                materias_disponibles = sorted(df_csv['course name'].dropna().unique())
+                
             materias_seleccionadas = st.multiselect(
                 "1. Filtrar por Materias (Deja vacío para seleccionar todas):", 
                 materias_disponibles, 
                 default=[]
             )
             
-            if materias_seleccionadas:
-                df_filtrado_mat = df_csv[df_csv['course name'].isin(materias_seleccionadas)]
-            else:
-                df_filtrado_mat = df_csv
-                
-            # Seleccionar Actividad (ahora limpia y agrupada, quitando "OTRO")
-            actividades_validas = [act for act in ["API 1", "API 2", "API 3", "API 4", "AE 1", "AE 2", "AE 3", "AE 4"] if act in df_filtrado_mat['actividad_limpia'].unique()]
-            
-            if not actividades_validas:
-                actividades_validas = sorted([a for a in df_filtrado_mat['actividad_limpia'].unique() if a != "OTRO"])
-
+            actividades_validas = ["API 1", "API 2", "API 3", "API 4", "AE 1", "AE 2", "AE 3", "AE 4"]
             actividad_objetivo = st.selectbox("2. Selecciona la actividad a reclamar:", actividades_validas)
             
             if st.button("🔍 Filtrar y Calcular Deudores", type="primary"):
-                # Normalización de IDs para el cruce exacto
                 df_xlsx['id_match'] = df_xlsx['id_alumno'].apply(normalizar_id)
-                df_filtrado_mat['id_match'] = df_filtrado_mat['sis user id'].apply(normalizar_id)
+                df_csv['id_match'] = df_csv['sis user id'].apply(normalizar_id)
                 
-                # Llave única Alumno + Materia para evitar falsos cumplidores en materias paralelas
-                df_filtrado_mat['llave_alumno_materia'] = df_filtrado_mat['id_match'] + "_" + df_filtrado_mat['course name'].str.strip().str.upper()
+                df_universo = df_xlsx.copy()
+                if materias_seleccionadas:
+                    df_universo = df_universo[df_universo['materia'].isin(materias_seleccionadas)]
                 
-                # Universo de análisis bajo las materias seleccionadas
-                universo = df_filtrado_mat[['id_match', 'user name', 'course name', 'llave_alumno_materia']].drop_duplicates()
+                if 'nombres' in df_universo.columns:
+                    col_nombre_origen = 'nombres'
+                elif 'student' in df_universo.columns:
+                    col_nombre_origen = 'student'
+                else:
+                    col_nombre_origen = df_universo.columns[2]
                 
-                # Alumnos con entregas válidas en la actividad objetivo (usando la columna limpia)
-                entregaron = df_filtrado_mat[
-                    (df_filtrado_mat['actividad_limpia'] == actividad_objetivo) & 
-                    (df_filtrado_mat['workflow state'].isin(['submitted', 'graded']))
-                ]
+                df_universo['llave_alumno_materia'] = df_universo['id_match'] + "_" + df_universo['materia'].str.strip().str.upper()
+                
+                entregaron = df_csv[
+                    (df_csv['actividad_limpia'] == actividad_objetivo) & 
+                    (df_csv['workflow state'].isin(['submitted', 'graded']))
+                ].copy()
+                
+                entregaron['llave_alumno_materia'] = entregaron['id_match'] + "_" + entregaron['course name'].str.strip().str.upper()
                 llaves_entregaron = entregaron['llave_alumno_materia'].unique()
                 
-                # Identificación matemática precisa por combinación Alumno + Materia
-                deudores = universo[~universo['llave_alumno_materia'].isin(llaves_entregaron)].copy()
+                df_deudores = df_universo[~df_universo['llave_alumno_materia'].isin(llaves_entregaron)].copy()
                 
-                # Merge definitivo con Excel para capturar el DNI real
-                df_final = pd.merge(deudores, df_xlsx[['id_match', 'dni']], on='id_match', how='inner')
+                df_deudores['nombre_final'] = df_deudores[col_nombre_origen].apply(extraer_y_formatear_nombre)
+                df_deudores['materia_final'] = df_deudores['materia'].apply(limpiar_texto)
                 
-                # Formateo y limpieza requerida
-                df_final['nombre'] = df_final['user name'].apply(extraer_y_formatear_nombre)
-                df_final['materia'] = df_final['course name'].apply(limpiar_texto)
+                st.session_state.df_resultado = df_deudores[['dni', 'nombre_final', 'materia_final']].rename(
+                    columns={'nombre_final': 'nombre', 'materia_final': 'materia'}
+                ).drop_duplicates()
                 
-                st.session_state.df_resultado = df_final[['dni', 'nombre', 'materia']].drop_duplicates()
                 st.session_state.nombre_base = f"Faltan_{actividad_objetivo.replace(' ', '_')}"
                 st.session_state.procesado = True
 
         # --- CASO B: REPORTE CALIFICACIONES ESTÁNDAR ---
         else:
             st.info("📂 **Reporte de Calificaciones estándar detectado automáticamente.**")
-            
             if st.button("🔍 Generar Base para Descargar", type="primary"):
-                # Limpieza de filas técnicas de Canvas
                 df_csv = df_csv[df_csv['Student'].str.contains('Points|Possible', case=False, na=False) == False]
                 
                 df_xlsx['id_match'] = df_xlsx['id_alumno'].apply(normalizar_id)
                 df_csv['id_match'] = df_csv['SIS Login ID'].apply(normalizar_id)
                 
-                # Cruce con Excel
                 df_final = pd.merge(df_csv, df_xlsx[['id_match', 'dni']], on='id_match', how='inner')
                 df_final['nombre'] = df_final['Student'].apply(extraer_y_formatear_nombre)
                 
-                # Extracción de la materia usando el nombre original del archivo
                 try:
                     materia_archivo = archivo_csv.name.split("Calificaciones-")[1].split(".")[0].replace("_", " ")
                 except:
                     materia_archivo = "Materia"
                 
                 df_final['materia'] = limpiar_texto(materia_archivo)
-                
                 st.session_state.df_resultado = df_final[['dni', 'nombre', 'materia']].drop_duplicates()
                 st.session_state.nombre_base = f"Base_{materia_archivo.replace(' ', '_')}"
                 st.session_state.procesado = True
 
-        # --- SECCIÓN DINÁMICA DE DESCARGA (CON PARTICIÓN MÁX 100 FILAS) ---
+        # --- SECCIÓN CRÍTICA CORREGIDA: LOGICA DE DESCARGA DIFERENCIADA ---
         if st.session_state.procesado:
             df_res = st.session_state.df_resultado
             total_filas = len(df_res)
             
             if not df_res.empty:
-                st.success(f"✅ ¡Proceso completado! Se detectaron {total_filas} registros deudores agrupando todas las variantes de nombre.")
-                
-                # Parámetros según el destino seleccionado por interfaz
-                header_bool = True if opcion_base == "Base para HubSpot" else False
-                suffix = "HUB" if opcion_base == "Base para HubSpot" else "WSP"
-                
+                st.success(f"✅ ¡Proceso completado! Se detectaron {total_filas} registros deudores.")
                 st.write("### 📥 Descargar Archivos Excel")
-                grid_descargas = st.columns(3)
                 
-                for i in range(0, total_filas, 100):
-                    chunk = df_res.iloc[i : i + 100]
-                    parte = (i // 100) + 1
-                    
-                    # Nomenclatura solicitada (_2, _3 para extras)
-                    nombre_archivo = f"{st.session_state.nombre_base}-{suffix}.xlsx" if parte == 1 else f"{st.session_state.nombre_base}-{suffix}_{parte}.xlsx"
+                # --- OPCIÓN 1: BASE PARA HUBSPOT (UN SOLO ARCHIVO CON CABECERA) ---
+                if opcion_base == "Base para HubSpot":
+                    nombre_archivo = f"{st.session_state.nombre_base}-HUB.xlsx"
                     
                     output = io.BytesIO()
                     with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
-                        chunk.to_excel(writer, index=False, header=header_bool)
+                        df_res.to_excel(writer, index=False, header=True) # Incluye encabezados
                     
-                    with grid_descargas[i//100 % 3]:
-                        st.download_button(
-                            label=f"📥 Parte {parte} ({len(chunk)} filas)",
-                            data=output.getvalue(),
-                            file_name=nombre_archivo,
-                            key=f"btn_dl_{i}_{st.session_state.count}",
-                            type="primary"
-                        )
+                    st.download_button(
+                        label=f"📥 Descargar Base Completa para HubSpot ({total_filas} filas)",
+                        data=output.getvalue(),
+                        file_name=nombre_archivo,
+                        key=f"btn_hub_{st.session_state.count}",
+                        type="primary"
+                    )
+                
+                # --- OPCIÓN 2: BASE PARA WHATSAPP (PARTICIÓN DE 100 FILAS SIN CABECERA) ---
+                else:
+                    grid_descargas = st.columns(3)
+                    for i in range(0, total_filas, 100):
+                        chunk = df_res.iloc[i : i + 100]
+                        parte = (i // 100) + 1
+                        
+                        nombre_archivo = f"{st.session_state.nombre_base}-WSP.xlsx" if parte == 1 else f"{st.session_state.nombre_base}-WSP_{parte}.xlsx"
+                        
+                        output = io.BytesIO()
+                        with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
+                            chunk.to_excel(writer, index=False, header=False) # Sin encabezados
+                        
+                        with grid_descargas[i//100 % 3]:
+                            st.download_button(
+                                label=f"📥 Parte {parte} ({len(chunk)} filas)",
+                                data=output.getvalue(),
+                                file_name=nombre_archivo,
+                                key=f"btn_wsp_{i}_{st.session_state.count}",
+                                type="primary"
+                            )
                 
                 st.write("### 👁️ Vista previa de los datos:")
                 st.dataframe(df_res)
             else:
-                st.warning("⚠️ El filtro seleccionado no arrojó ningún alumno deudor. Verifica los criterios.")
+                st.warning("⚠️ No se encontraron deudores.")
 
     except Exception as e:
         st.error(f"Error crítico durante el análisis: {e}")
 
-# --- RESETEO CONTROLADO ---
 st.divider()
 if st.button("➕ Limpiar Pantalla y Nueva Carga", type="secondary"):
     reiniciar_aplicacion()
