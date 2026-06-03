@@ -12,7 +12,7 @@ def reiniciar_aplicacion():
     st.session_state.procesado = False
 
 def limpiar_texto(texto):
-    """Elimina tildes, convierte Ñ en ni, quita espacios extras y pasa a mayúsculas para cruces."""
+    """Elimina tildes, convierte Ñ en ni, quita espacios extras y pasa a mayúsculas."""
     if not isinstance(texto, str):
         return str(texto).strip().upper()
     texto = texto.replace('ñ', 'ni').replace('Ñ', 'Ni')
@@ -119,7 +119,7 @@ if archivo_csv and archivo_xlsx:
             
             df_csv['actividad_limpia'] = df_csv['assignment name'].apply(homologar_actividad)
             
-            # Normalizamos nombres de materia originales para mostrarlos limpios en la interfaz
+            # Normalizamos nombres de materia para visualización y filtrado
             if 'materia' in df_xlsx.columns:
                 df_xlsx['materia_limpia_filtro'] = df_xlsx['materia'].astype(str).str.strip().str.upper()
                 materias_disponibles = sorted(df_xlsx['materia_limpia_filtro'].dropna().unique())
@@ -141,7 +141,7 @@ if archivo_csv and archivo_xlsx:
                 df_xlsx['id_match'] = df_xlsx['id_alumno'].apply(normalizar_id)
                 df_csv['id_match'] = df_csv['sis user id'].apply(normalizar_id)
                 
-                # Filtrar el Universo Base (Excel)
+                # Filtrar Universo Base (Excel)
                 df_universo = df_xlsx.copy()
                 if materias_seleccionadas:
                     df_universo = df_universo[df_universo['materia_limpia_filtro'].isin(materias_seleccionadas)]
@@ -153,25 +153,26 @@ if archivo_csv and archivo_xlsx:
                 else:
                     col_nombre_origen = df_universo.columns[2]
                 
-                # NUEVO: Aseguramos limpieza estricta (sin tildes) en la llave de ambos dataframes
+                # Llaves compuestas con texto limpio
                 df_universo['materia_key'] = df_universo['materia'].apply(limpiar_texto)
                 df_universo['llave_alumno_materia'] = df_universo['id_match'] + "_" + df_universo['materia_key']
                 
+                # CORRECCIÓN DE ENTRREGAS: Consideramos entregado ÚNICAMENTE si está calificado o enviado formalmente
                 entregaron = df_csv[
                     (df_csv['actividad_limpia'] == actividad_objetivo) & 
-                    (df_csv['workflow state'].isin(['submitted', 'graded']))
+                    (df_csv['workflow state'].isin(['submitted', 'graded'])) &
+                    (df_csv['submission date'].notna() | df_csv['score'].notna())
                 ].copy()
                 
                 entregaron['materia_key'] = entregaron['course name'].apply(limpiar_texto)
                 entregaron['llave_alumno_materia'] = entregaron['id_match'] + "_" + entregaron['materia_key']
                 llaves_entregaron = entregaron['llave_alumno_materia'].unique()
                 
-                # Exclusión exacta e inmune a tildes o variaciones tipográficas
+                # Exclusión final estricta
                 df_deudores = df_universo[~df_universo['llave_alumno_materia'].isin(llaves_entregaron)].copy()
                 
-                # Formateo visual final de salida
+                # Formateo visual
                 df_deudores['nombre_final'] = df_deudores[col_nombre_origen].apply(extraer_y_formatear_nombre)
-                # Conservamos el nombre original de la materia pero limpio estéticamente
                 df_deudores['materia_final'] = df_deudores['materia'].astype(str).str.strip().str.upper()
                 
                 st.session_state.df_resultado = df_deudores[['dni', 'nombre_final', 'materia_final']].rename(
