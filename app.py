@@ -11,7 +11,7 @@ def reiniciar_aplicacion():
     st.session_state.procesado = False
 
 def limpiar_texto(texto):
-    """Normaliza de forma estricta los nombres de las materias para el cruce."""
+    """Normaliza de forma estricta los nombres de las materias para evitar fallas por tildes."""
     if pd.isna(texto):
         return ""
     texto = str(texto).upper().strip()
@@ -30,7 +30,7 @@ def extraer_y_formatear_nombre(celda):
     return primer_nombre.capitalize()
 
 def forzar_id_entero(valor):
-    """Convierte cualquier ID en un string numérico entero puro sin decimales."""
+    """Convierte cualquier ID en un string numérico limpio para cruzamiento directo."""
     if pd.isna(valor): 
         return ""
     try:
@@ -93,19 +93,16 @@ with col2:
 # --- PROCESAMIENTO GENERAL ---
 if archivo_csv and archivo_xlsx:
     try:
-        # LECTURA ROBUSTA DEL CSV: Probamos primero con coma y si falla pasamos a punto y coma
+        # Lectura robusta del CSV separando correctamente comas y puntos y comas
         contenido = archivo_csv.read()
         try:
             df_csv = pd.read_csv(io.BytesIO(contenido), sep=',', engine='python', on_bad_lines='skip')
-            # Si leyó una sola columna gigante, es porque el separador era punto y coma
-            if df_csv.shape[1] <= 1:
-                raise ValueError
+            if df_csv.shape[1] <= 1: raise ValueError
         except:
             df_csv = pd.read_csv(io.BytesIO(contenido), sep=';', engine='python', on_bad_lines='skip')
             
         df_xlsx = pd.read_excel(archivo_xlsx)
         
-        # Limpieza estandarizada de columnas
         df_csv.columns = df_csv.columns.str.strip()
         cols_csv_lower = [c.lower() for c in df_csv.columns]
         df_xlsx.columns = df_xlsx.columns.str.strip().str.lower()
@@ -115,14 +112,13 @@ if archivo_csv and archivo_xlsx:
         if es_submissions:
             st.success("📂 **Reporte de Entregas (Submissions) detectado con éxito.**")
             df_csv.columns = cols_csv_lower
-            df_csv = df_csv.dropna(subset=['user name', 'sis user id'])
+            df_csv = df_csv.dropna(subset=['sis user id'])
             
-            # Homologación inmediata de actividades y mapeos de texto
+            # Normalización y homologación de campos clave
             df_csv['actividad_limpia'] = df_csv['assignment name'].apply(homologar_actividad)
             df_xlsx['materia_match'] = df_xlsx['materia'].apply(limpiar_texto)
             df_csv['materia_match'] = df_csv['course name'].apply(limpiar_texto)
             
-            # Unificación estricta de IDs a Texto Entero Puro
             df_xlsx['id_match'] = df_xlsx['id_alumno'].apply(forzar_id_entero)
             df_csv['id_match'] = df_csv['sis user id'].apply(forzar_id_entero)
             
@@ -140,47 +136,36 @@ if archivo_csv and archivo_xlsx:
             
             if st.button("🔍 Filtrar y Calcular Deudores", type="primary"):
                 
-                # 1. Universo Base del Excel filtrado
+                # 1. Filtramos el Universo del Excel por materias elegidas
                 df_universo = df_xlsx.copy()
                 if materias_seleccionadas:
                     df_universo = df_universo[df_universo['materia_match'].isin(materias_seleccionadas)]
                 
-                # Reporte de control en pantalla para auditoría
-                total_inscritos = len(df_universo.drop_duplicates(subset=['id_match', 'materia_match']))
-                st.info(f"📊 Alumnos inscritos en el Excel para estas materias: **{total_inscritos}**")
+                # Creamos la llave compuesta estricta (ID_MATERIA) para el Universo
+                df_universo['llave_cruce'] = df_universo['id_match'] + "_" + df_universo['materia_match']
                 
-                if 'nombres' in df_universo.columns:
-                    col_nombre_origen = 'nombres'
-                elif 'student' in df_universo.columns:
-                    col_nombre_origen = 'student'
-                else:
-                    col_nombre_origen = df_universo.columns[2]
-                
-                # 2. Filtrar Canvas para aislar SOLO a los que SÍ entregaron válidamente
-                entregaron = df_csv[
+                # 2. Aislamos a los alumnos que SÍ entregaron de manera efectiva en Canvas
+                si_entregaron = df_csv[
                     (df_csv['actividad_limpia'] == actividad_objetivo) & 
                     (df_csv['workflow state'].isin(['submitted', 'graded']))
-                ][['id_match', 'materia_match']].copy()
+                ].copy()
                 
-                entregaron['entregado_canvas'] = True
-                entregaron = entregaron.drop_duplicates(subset=['id_match', 'materia_match'])
+                # Creamos la misma llave compuesta para los cumplidores
+                si_entregaron['llave_cruce'] = si_entregaron['id_match'] + "_" + si_entregaron['materia_match']
+                lista_cumplidores = si_entregaron['llave_cruce'].unique()
                 
-                # 3. CRUCE MATRICIAL PERFECTO (Left Join por Alumno + Materia)
-                df_cruce = pd.merge(
-                    df_universo, 
-                    entregaron, 
-                    on=['id_match', 'materia_match'], 
-                    how='left'
-                )
+                # 3. EXCLUSIÓN DIRECTA: Nos quedamos con las filas del universo que NO están en los cumplidores
+                df_deudores = df_universo[~df_universo['llave_cruce'].isin(lista_cumplidores)].copy()
                 
-                # 4. Los deudores son los que tienen la marca de Canvas vacía (NaN)
-                df_deudores = df_cruce[df_cruce['entregado_canvas'].isna()].copy()
+                # Formateo estético final de los campos
+                if 'nombres' in df_deudores.columns: col_nombre = 'nombres'
+                elif 'student' in df_deudores.columns: col_nombre = 'student'
+                else: col_nombre = df_deudores.columns[2]
                 
-                # Formateo estético final de salida
-                df_deudores['nombre_final'] = df_deudores[col_nombre_origen].apply(extraer_y_formatear_nombre)
+                df_deudores['nombre_final'] = df_deudores[col_nombre].apply(extraer_y_formatear_nombre)
                 df_deudores['materia_final'] = df_deudores['materia'].astype(str).str.strip().str.upper()
                 
-                # Guardamos el resultado sin eliminar dobles deudas legítimas (DNI + Materia distinta)
+                # Agrupamos garantizando que si debe ambas materias aparezca dos veces (una por cada materia)
                 st.session_state.df_resultado = df_deudores[['dni', 'nombre_final', 'materia_final']].rename(
                     columns={'nombre_final': 'nombre', 'materia_final': 'materia'}
                 ).drop_duplicates(subset=['dni', 'materia'])
@@ -209,7 +194,7 @@ if archivo_csv and archivo_xlsx:
                 st.session_state.nombre_base = f"Base_{materia_archivo.replace(' ', '_')}"
                 st.session_state.procesado = True
 
-        # --- SECCIÓN DE DESCARGA DIFERENCIADA ---
+        # --- SECCIÓN DE DESCARGA ---
         if st.session_state.procesado:
             df_res = st.session_state.df_resultado
             total_filas = len(df_res)
