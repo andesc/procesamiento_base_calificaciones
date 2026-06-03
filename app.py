@@ -95,7 +95,7 @@ with st.expander("📌 Instrucciones de uso - LEER AQUÍ"):
     if opcion_base == "Base para HubSpot":
         st.markdown("""
         **Para generar la Base de HubSpot (Deudores Absolutos):**
-        1. **Reporte de Canvas (CSV):** Subí el reporte de entregas (*Submissions*) exportado directamente desde Canvas. Debe contener las columnas `SIS User ID` y `Assignment Name`.
+        1. **Reporte de Canvas (CSV):** Subí el reporte de entregas (*Submissions*) o (*Calificaciones*) exportado directamente desde Canvas. Debe contener las columnas `SIS User ID` y `Assignment Name`.
         2. **Base de Alumnos (XLSX):** Subí el Excel de avance (*Query*) con las columnas de tus alumnos inscriptos. El sistema cruzará de forma inteligente quiénes **no registran entregas** válidas.
         3. El archivo resultante incluirá encabezados y mantendrá registros múltiples si un alumno adeuda más de una materia.
         """)
