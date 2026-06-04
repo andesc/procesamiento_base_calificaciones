@@ -93,17 +93,17 @@ st.markdown("### 📥 Carga de archivos")
 with st.expander("📌 Instrucciones de uso - LEER AQUÍ"):
     if opcion_base == "Base para HubSpot":
         st.markdown("""
-        **Para generar la Base de HubSpot (Deudores Absolutos):**
+        **Para generar la Base de HubSpot (Solo columna Email):**
         1. **Reporte de Canvas (CSV):** Subí el archivo de Canvas (puede ser el reporte de *Submissions* o el de *Calificaciones estándar*).
-        2. **Base de Alumnos (XLSX):** Subí el Excel de Base Invitaciones. El sistema detectará el formato automáticamente y cruzará los datos.
-        3. El archivo resultante incluirá encabezados y mantendrá registros múltiples si un alumno adeuda más de una materia.
+        2. **Base de Alumnos (XLSX):** Subí el Excel de invitaciones. Es obligatorio para extraer el correo de los deudores absolutos.
+        3. El archivo resultante contendrá **únicamente la columna `email`** con encabezado.
         """)
     else:
         st.markdown("""
         **Para generar la Base de WhatsApp (Segmentada de a 100):**
         1. **Reporte de Canvas (CSV):** Subí tu archivo de Canvas.
-        2. **Base de Alumnos (XLSX - Opcional):** Si usás el reporte de *Calificaciones estándar*, **podés dejar este campo vacío**. El sistema procesará los nombres directo de Canvas. Si usás el de *Submissions*, sigue siendo obligatorio.
-        3. Los archivos parciales se descargarán **sin encabezados** listos para copiar y pegar.
+        2. **Base de Alumnos (XLSX - Opcional para Calificaciones):** Si usás el reporte de *Calificaciones estándar*, podés dejarlo vacío (obtendrás Nombre y Materia). Si usás el de *Submissions*, es obligatorio para calcular las exclusiones.
+        3. El archivo resultante organizará las columnas como **`dni`, `nombre`, `materia`** (y `celular` si existe) **siempre sin encabezados**.
         """)
 
 col1, col2 = st.columns(2)
@@ -175,14 +175,24 @@ if archivo_csv:
                     df_deudores['nombre_final'] = df_deudores[col_nombre].apply(extraer_primer_nombre)
                     df_deudores['materia_final'] = df_deudores['materia'].astype(str).str.strip().str.upper()
                     
-                    columnas_salida = ['dni', 'nombre_final', 'materia_final']
-                    columnas_renombre = {'nombre_final': 'nombre', 'materia_final': 'materia'}
+                    # Estructura según Destino de Base solicitado
+                    if opcion_base == "Base para HubSpot":
+                        st.session_state.df_resultado = df_deudores[['email']].dropna().drop_duplicates()
+                    else:
+                        # Estructura WhatsApp solicitada: dni, nombre, materia, (celular si existe)
+                        columnas_wsp = ['dni', 'nombre_final', 'materia_final']
+                        if 'celular' in df_deudores.columns:
+                            df_deudores['celular'] = df_deudores['celular'].fillna('').astype(str)
+                            columnas_wsp.append('celular')
+                            
+                        df_final_wsp = df_deudores[columnas_wsp].copy()
+                        if 'celular' in df_deudores.columns:
+                            df_final_wsp = df_final_wsp.rename(columns={'nombre_final': 'nombre', 'materia_final': 'materia'})
+                        else:
+                            df_final_wsp = df_final_wsp.rename(columns={'nombre_final': 'nombre', 'materia_final': 'materia'})
+                            
+                        st.session_state.df_resultado = df_final_wsp.drop_duplicates(subset=['dni', 'materia'])
                     
-                    if opcion_base == "Base para Whatsapp" and 'celular' in df_deudores.columns:
-                        columnas_salida.insert(2, 'celular')
-                        df_deudores['celular'] = df_deudores['celular'].fillna('').astype(str)
-                    
-                    st.session_state.df_resultado = df_deudores[columnas_salida].rename(columns=columnas_renombre).drop_duplicates(subset=['dni', 'materia'])
                     st.session_state.nombre_base = f"Faltan_{actividad_objetivo.replace(' ', '_')}"
                     st.session_state.procesado = True
 
@@ -191,11 +201,9 @@ if archivo_csv:
             st.success("📂 **Reporte de Calificaciones estándar detectado con éxito.**")
             df_canvas = df_canvas[~df_canvas['Student'].str.contains('Points|Possible', case=False, na=False)]
             
-            # Buscar dinámicamente la columna identificadora en Calificaciones estándar
             col_id_canvas = 'SIS Login ID' if 'SIS Login ID' in df_canvas.columns else ('SIS User ID' if 'SIS User ID' in df_canvas.columns else df_canvas.columns[1])
             df_canvas['id_match'] = df_canvas[col_id_canvas].apply(forzar_id_string)
             
-            # Extraer el nombre de la materia desde el nombre del archivo cargado
             try:
                 materia_archivo = archivo_csv.name.split("Calificaciones-")[1].split(".")[0].replace("_", " ")
             except:
@@ -204,28 +212,25 @@ if archivo_csv:
             materia_archivo_limpia = limpiar_texto(materia_archivo)
             aplicar_exclusion = any(x in materia_archivo_limpia for x in ["API", "AP"])
             
-            # Variable de control de acción
             ejecutar_calculo = False
             if opcion_base == "Base para HubSpot" and not archivo_xlsx:
-                st.warning("⚠️ Para generar una base estructurada para **HubSpot**, es necesario que cargues el Excel para mapear la columna de DNI obligatoria.")
+                st.warning("⚠️ Para generar una base estructurada para **HubSpot**, es necesario que cargues el Excel para mapear la columna de Email obligatoria.")
             else:
                 if st.button("🔍 Calcular Deudores Reales (Calificaciones)", type="primary"):
                     ejecutar_calculo = True
 
             if ejecutar_calculo:
-                # Sub-caso A: No cargó el Excel pero va para WhatsApp (Procesamiento rápido Directo de Canvas)
+                # Sub-caso A: No cargó el Excel pero va para WhatsApp (Procesamiento rápido de Canvas)
                 if not archivo_xlsx:
-                    # Validar si la materia del nombre del archivo cae en lista negra para APIs
                     if aplicar_exclusion and materia_archivo_limpia in LISTA_NEGRA_LIMPIA:
-                        st.warning(f"🚫 La materia '{materia_archivo.upper()}' se encuentra en la lista negra de exclusión de APIs. El resultado devuelto será de 0 registros.")
-                        df_final = pd.DataFrame(columns=['nombre_final', 'materia_final'])
+                        st.warning(f"🚫 La materia '{materia_archivo.upper()}' está excluida de APIs.")
+                        df_final = pd.DataFrame(columns=['nombre', 'materia'])
                     else:
-                        df_canvas['nombre_final'] = df_canvas['Student'].apply(extraer_primer_nombre)
-                        df_canvas['materia_final'] = materia_archivo.strip().upper()
-                        df_final = df_canvas[['nombre_final', 'materia_final']].copy()
+                        df_canvas['nombre'] = df_canvas['Student'].apply(extraer_primer_nombre)
+                        df_canvas['materia'] = materia_archivo.strip().upper()
+                        df_final = df_canvas[['nombre', 'materia']].copy()
                     
-                    # Para WhatsApp rápido sin Excel, devolvemos solo Nombre y Materia
-                    st.session_state.df_resultado = df_final.rename(columns={'nombre_final': 'nombre', 'materia_final': 'materia'}).drop_duplicates()
+                    st.session_state.df_resultado = df_final.drop_duplicates()
                 
                 # Sub-caso B: Sí cargó el Excel (Cruce tradicional completo)
                 else:
@@ -238,36 +243,41 @@ if archivo_csv:
                     if aplicar_exclusion:
                         df_universo = df_universo[~df_universo['materia_match'].isin(LISTA_NEGRA_LIMPIA)]
                     
-                    df_final = pd.merge(df_canvas, df_universo, on='id_match', how='inner')
-                    df_final['nombre_final'] = df_final['Student'].apply(extraer_primer_nombre)
-                    df_final['materia_final'] = materia_archivo.strip().upper()
+                    df_cruce = pd.merge(df_canvas, df_universo, on='id_match', how='inner')
+                    df_cruce['nombre_final'] = df_cruce['Student'].apply(extraer_primer_nombre)
+                    df_cruce['materia_final'] = materia_archivo.strip().upper()
                     
-                    columnas_salida = ['dni', 'nombre_final', 'materia_final']
-                    columnas_renombre = {'nombre_final': 'nombre', 'materia_final': 'materia'}
-                    
-                    if opcion_base == "Base para Whatsapp" and 'celular' in df_final.columns:
-                        columnas_salida.insert(2, 'celular')
-                        df_final['celular'] = df_final['celular'].fillna('').astype(str)
-                        
-                    st.session_state.df_resultado = df_final[columnas_salida].rename(columns=columnas_renombre).drop_duplicates()
+                    if opcion_base == "Base para HubSpot":
+                        st.session_state.df_resultado = df_cruce[['email']].dropna().drop_duplicates()
+                    else:
+                        # WhatsApp con Excel: dni, nombre, materia, (celular)
+                        columnas_wsp = ['dni', 'nombre_final', 'materia_final']
+                        if 'celular' in df_cruce.columns:
+                            df_cruce['celular'] = df_cruce['celular'].fillna('').astype(str)
+                            columnas_wsp.append('celular')
+                            
+                        df_final_wsp = df_cruce[columnas_wsp].rename(columns={'nombre_final': 'nombre', 'materia_final': 'materia'})
+                        st.session_state.df_resultado = df_final_wsp.drop_duplicates()
                 
                 st.session_state.nombre_base = f"Base_{materia_archivo.replace(' ', '_')}"
                 st.session_state.procesado = True
 
-        # --- RENDERIZADO DE RESULTADOS ---
+        # --- RENDERIZADO Y DESCARGA DE RESULTADOS ---
         if st.session_state.procesado:
             df_res = st.session_state.df_resultado
             total_filas = len(df_res)
             
-            st.success(f"✅ ¡Proceso completado! Se detectaron {total_filas} registros deudores aplicables.")
+            st.success(f"✅ ¡Proceso completado! Se detectaron {total_filas} registros válidos.")
             st.write("### 📥 Descargar Archivos Excel")
             
             output = io.BytesIO()
             if opcion_base == "Base para HubSpot":
                 with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
+                    # HubSpot va CON encabezados y solo la columna email
                     df_res.to_excel(writer, index=False, header=True)
                 st.download_button(label=f"📥 Descargar Base HubSpot ({total_filas} filas)", data=output.getvalue(), file_name=f"{st.session_state.nombre_base}-HUB.xlsx", type="primary")
             else:
+                # WhatsApp va segmentado de a 100 filas y SIN encabezados
                 grid = st.columns(3)
                 for i in range(0, total_filas, 100):
                     chunk = df_res.iloc[i : i + 100]
@@ -278,7 +288,7 @@ if archivo_csv:
                     with grid[(i//100) % 3]:
                         st.download_button(label=f"📥 Parte {parte} ({len(chunk)} filas)", data=out_chunk.getvalue(), file_name=f"{st.session_state.nombre_base}-WSP_{parte}.xlsx")
             
-            st.write("### 👁️ Vista previa de deudores:")
+            st.write("### 👁️ Vista previa de los datos generados:")
             st.dataframe(df_res)
 
     except Exception as e:
