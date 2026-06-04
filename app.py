@@ -166,7 +166,6 @@ if archivo_csv:
                 df_canvas['actividad_limpia'] = df_canvas['assignment name'].apply(homologar_actividad)
                 
                 materias_disponibles = sorted(df_excel['materia'].dropna().unique())
-                # RECONSTRUIDO: Línea reparada y completada sin truncamiento
                 materias_seleccionadas = st.multiselect("1. Seleccionar Materias a evaluar (Vacío = Todas):", materias_disponibles)
                 actividad_objetivo = st.selectbox("2. Selecciona la actividad a reclamar:", ["API 1", "API 2", "API 3", "API 4", "AE 1", "AE 2", "AE 3", "AE 4"])
                 
@@ -207,16 +206,3 @@ if archivo_csv:
                             columnas_wsp.append('celular')
                             
                         df_final_wsp = df_deudores[columnas_wsp].rename(columns={'nombre_final': 'nombre', 'materia_final': 'materia'})
-                        st.session_state.df_resultado = df_final_wsp.drop_duplicates(subset=['dni', 'materia'])
-                    
-                    st.session_state.nombre_base = f"Faltan_{actividad_objetivo.replace(' ', '_')}"
-                    st.session_state.procesado = True
-
-        # ==========================================
-        # --- CASO 2: REPORTE DE CALIFICACIONES ESTÁNDAR ---
-        # ==========================================
-        else:
-            st.success("📂 **Reporte de Calificaciones estándar detectado con éxito.**")
-            df_canvas = df_canvas[~df_canvas['Student'].str.contains('Points|Possible', case=False, na=False)]
-            
-            # El SIS Login ID actúa como la clave de cruce (DNI nativo de Canvas)
