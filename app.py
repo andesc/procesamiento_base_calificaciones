@@ -154,4 +154,49 @@ if archivo_csv:
                 df_excel = pd.read_excel(archivo_xlsx)
                 df_excel.columns = df_excel.columns.str.strip().str.lower()
                 df_canvas.columns = cols_canvas_lower
-                df_canvas = df_canvas.dropna
+                # CORREGIDO: Línea restaurada a su estado completo original
+                df_canvas = df_canvas.dropna(subset=['sis user id'])
+                
+                # Mapeo de IDs usando 'id_alumno' o 'dni' como clave del Excel según lo que venga
+                col_id_excel = 'id_alumno' if 'id_alumno' in df_excel.columns else 'dni'
+                df_excel['id_match'] = df_excel[col_id_excel].apply(forzar_id_string)
+                df_canvas['id_match'] = df_canvas['sis user id'].apply(forzar_id_string)
+                
+                df_excel['materia_match'] = df_excel['materia'].apply(limpiar_texto)
+                df_canvas['materia_match'] = df_canvas['course name'].apply(limpiar_texto)
+                df_canvas['actividad_limpia'] = df_canvas['assignment name'].apply(homologar_actividad)
+                
+                materias_disponibles = sorted(df_excel['materia'].dropna().unique())
+                materias_seleccionadas = st.multiselect("1. Seleccionar Materias a evaluar (Vacío = Todas):", materias_disponibles)
+                actividad_objetivo = st.selectbox("2. Selecciona la actividad a reclamar:", ["API 1", "API 2", "API 3", "API 4", "AE 1", "AE 2", "AE 3", "AE 4"])
+                
+                if st.button("🔍 Calcular Deudores Reales", type="primary"):
+                    df_universo = df_excel.copy()
+                    if materias_seleccionadas:
+                        df_universo = df_universo[df_universo['materia'].isin(materias_seleccionadas)]
+                    
+                    # Regla de exclusión automática de materias de lista negra en APIs
+                    if "API" in actividad_objetivo.upper():
+                        df_universo = df_universo[~df_universo['materia_match'].isin(LISTA_NEGRA_LIMPIA)]
+                    
+                    df_universo['llave_cruce'] = df_universo['id_match'] + "_" + df_universo['materia_match']
+                    
+                    entregas_validas = df_canvas[
+                        (df_canvas['actividad_limpia'] == actividad_objetivo) & 
+                        (df_canvas['workflow state'].isin(['submitted', 'graded']))
+                    ].copy()
+                    entregas_validas['llave_cruce'] = entregas_validas['id_match'] + "_" + entregas_validas['materia_match']
+                    lista_cumplidores = entregas_validas['llave_cruce'].unique()
+                    
+                    df_deudores = df_universo[~df_universo['llave_cruce'].isin(lista_cumplidores)].copy()
+                    
+                    col_nombre = 'nombres' if 'nombres' in df_deudores.columns else ('student' if 'student' in df_deudores.columns else df_deudores.columns[2])
+                    df_deudores['nombre_final'] = df_deudores[col_nombre].apply(extraer_primer_nombre)
+                    df_deudores['materia_final'] = df_deudores['materia'].astype(str).str.strip().str.upper()
+                    
+                    # Asegurar la columna DNI para la salida si venía originalmente mapeada como id_alumno
+                    if 'dni' not in df_deudores.columns:
+                        df_deudores['dni'] = df_deudores['id_match']
+
+                    if opcion_base == "Base para HubSpot":
+                        st.session_state.df_resultado = df_deudores[['email']].
