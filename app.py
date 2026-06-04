@@ -95,7 +95,7 @@ with st.expander("📌 Instrucciones de uso - LEER AQUÍ"):
         st.markdown("""
         **Para generar la Base de HubSpot (Deudores Absolutos):**
         1. **Reporte de Canvas (CSV):** Subí el archivo de Canvas (puede ser el reporte de *Submissions* o el de *Calificaciones estándar*).
-        2. **Base de Alumnos (XLSX):** Subí el Excel de avance (*Query*). El sistema detectará el formato automáticamente y cruzará los datos.
+        2. **Base de Alumnos (XLSX):** Subí el Excel de Base Invitaciones. El sistema detectará el formato automáticamente y cruzará los datos.
         3. El archivo resultante incluirá encabezados y mantendrá registros múltiples si un alumno adeuda más de una materia.
         """)
     else:
