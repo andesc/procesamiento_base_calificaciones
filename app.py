@@ -166,4 +166,57 @@ if archivo_csv:
                 df_canvas['actividad_limpia'] = df_canvas['assignment name'].apply(homologar_actividad)
                 
                 materias_disponibles = sorted(df_excel['materia'].dropna().unique())
-                materias_seleccion
+                # RECONSTRUIDO: Línea reparada y completada sin truncamiento
+                materias_seleccionadas = st.multiselect("1. Seleccionar Materias a evaluar (Vacío = Todas):", materias_disponibles)
+                actividad_objetivo = st.selectbox("2. Selecciona la actividad a reclamar:", ["API 1", "API 2", "API 3", "API 4", "AE 1", "AE 2", "AE 3", "AE 4"])
+                
+                if st.button("🔍 Calcular Deudores Reales", type="primary"):
+                    df_universo = df_excel.copy()
+                    if materias_seleccionadas:
+                        df_universo = df_universo[df_universo['materia'].isin(materias_seleccionadas)]
+                    
+                    # Regla de exclusión automática de materias de lista negra en APIs
+                    if "API" in actividad_objetivo.upper():
+                        df_universo = df_universo[~df_universo['materia_match'].isin(LISTA_NEGRA_LIMPIA)]
+                    
+                    df_universo['llave_cruce'] = df_universo['id_match'] + "_" + df_universo['materia_match']
+                    
+                    entregas_validas = df_canvas[
+                        (df_canvas['actividad_limpia'] == actividad_objetivo) & 
+                        (df_canvas['workflow state'].isin(['submitted', 'graded']))
+                    ].copy()
+                    entregas_validas['llave_cruce'] = entregas_validas['id_match'] + "_" + entregas_validas['materia_match']
+                    lista_cumplidores = entregas_validas['llave_cruce'].unique()
+                    
+                    df_deudores = df_universo[~df_universo['llave_cruce'].isin(lista_cumplidores)].copy()
+                    
+                    col_nombre = 'nombres' if 'nombres' in df_deudores.columns else ('student' if 'student' in df_deudores.columns else df_deudores.columns[2])
+                    df_deudores['nombre_final'] = df_deudores[col_nombre].apply(extraer_primer_nombre)
+                    df_deudores['materia_final'] = df_deudores['materia'].astype(str).str.strip().str.upper()
+                    
+                    # Asegurar la columna DNI para la salida si venía originalmente mapeada como id_alumno
+                    if 'dni' not in df_deudores.columns:
+                        df_deudores['dni'] = df_deudores['id_match']
+
+                    if opcion_base == "Base para HubSpot":
+                        st.session_state.df_resultado = df_deudores[['email']].dropna().drop_duplicates()
+                    else:
+                        columnas_wsp = ['dni', 'nombre_final', 'materia_final']
+                        if 'celular' in df_deudores.columns:
+                            df_deudores['celular'] = df_deudores['celular'].fillna('').astype(str)
+                            columnas_wsp.append('celular')
+                            
+                        df_final_wsp = df_deudores[columnas_wsp].rename(columns={'nombre_final': 'nombre', 'materia_final': 'materia'})
+                        st.session_state.df_resultado = df_final_wsp.drop_duplicates(subset=['dni', 'materia'])
+                    
+                    st.session_state.nombre_base = f"Faltan_{actividad_objetivo.replace(' ', '_')}"
+                    st.session_state.procesado = True
+
+        # ==========================================
+        # --- CASO 2: REPORTE DE CALIFICACIONES ESTÁNDAR ---
+        # ==========================================
+        else:
+            st.success("📂 **Reporte de Calificaciones estándar detectado con éxito.**")
+            df_canvas = df_canvas[~df_canvas['Student'].str.contains('Points|Possible', case=False, na=False)]
+            
+            # El SIS Login ID actúa como la clave de cruce (DNI nativo de Canvas)
