@@ -9,6 +9,8 @@ st.set_page_config(page_title="Generador de bases", page_icon="🛠️")
 def reiniciar_aplicacion():
     st.session_state.count += 1
     st.session_state.procesado = False
+    if 'df_resultado' in st.session_state: del st.session_state.df_resultado
+    if 'nombre_base' in st.session_state: del st.session_state.nombre_base
 
 def limpiar_texto(texto):
     """Elimina tildes, eñes, espacios extras y pasa a mayúsculas para un cruce ciego y perfecto."""
@@ -85,7 +87,19 @@ if 'procesado' not in st.session_state: st.session_state.procesado = False
 
 # --- INTERFAZ ---
 st.title("🛠️ Generador de bases")
-opcion_base = st.radio("Selecciona el tipo de base que deseas generar:", ["Base para HubSpot", "Base para Whatsapp"], key="radio_opcion")
+
+# CONTROL DE CAMBIO DE OPCIÓN: Si cambia el radio, limpiamos el estado anterior para evitar fantasmas
+def al_cambiar_modo():
+    st.session_state.procesado = False
+    if 'df_resultado' in st.session_state: del st.session_state.df_resultado
+    if 'nombre_base' in st.session_state: del st.session_state.nombre_base
+
+opcion_base = st.radio(
+    "Selecciona el tipo de base que deseas generar:", 
+    ["Base para HubSpot", "Base para Whatsapp"], 
+    key="radio_opcion",
+    on_change=al_cambiar_modo
+)
 
 st.divider()
 
@@ -244,66 +258,4 @@ if archivo_csv:
                     
                     # Detectar si la columna en el Excel se llama 'dni' o 'id_alumno'
                     col_id_excel = 'dni' if 'dni' in df_excel.columns else ('id_alumno' if 'id_alumno' in df_excel.columns else df_excel.columns[0])
-                    df_excel['id_match'] = df_excel[col_id_excel].apply(forzar_id_string)
-                    df_excel['materia_match'] = df_excel['materia'].apply(limpiar_texto)
-                    
-                    df_universo = df_excel.copy()
-                    if aplicar_exclusion:
-                        df_universo = df_universo[~df_universo['materia_match'].isin(LISTA_NEGRA_LIMPIA)]
-                    
-                    # Cruce e indexación impecable de columnas de salida
-                    df_cruce = pd.merge(df_canvas, df_universo, on='id_match', how='inner')
-                    df_cruce['dni_final'] = df_cruce['id_match']  
-                    df_cruce['nombre_final'] = df_cruce['Student'].apply(extraer_primer_nombre)
-                    df_cruce['materia_final'] = materia_archivo.strip().upper()
-                    
-                    if opcion_base == "Base para HubSpot":
-                        st.session_state.df_resultado = df_cruce[['email']].dropna().drop_duplicates()
-                    else:
-                        # WhatsApp estructurado completo: dni, nombre, materia, (celular)
-                        columnas_wsp = ['dni_final', 'nombre_final', 'materia_final']
-                        if 'celular' in df_cruce.columns:
-                            df_cruce['celular'] = df_cruce['celular'].fillna('').astype(str)
-                            columnas_wsp.append('celular')
-                            
-                        df_final_wsp = df_cruce[columnas_wsp].rename(columns={'dni_final': 'dni', 'nombre_final': 'nombre', 'materia_final': 'materia'})
-                        st.session_state.df_resultado = df_final_wsp.drop_duplicates()
-                
-                st.session_state.nombre_base = f"Base_{materia_archivo.replace(' ', '_')}"
-                st.session_state.procesado = True
-
-        # --- RENDERIZADO Y DESCARGA DE RESULTADOS ---
-        if st.session_state.procesado:
-            df_res = st.session_state.df_resultado
-            total_filas = len(df_res)
-            
-            st.success(f"✅ ¡Proceso completado! Se detectaron {total_filas} registros válidos.")
-            st.write("### 📥 Descargar Archivos Excel")
-            
-            output = io.BytesIO()
-            if opcion_base == "Base para HubSpot":
-                with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
-                    df_res.to_excel(writer, index=False, header=True)
-                st.download_button(label=f"📥 Descargar Base HubSpot ({total_filas} filas)", data=output.getvalue(), file_name=f"{st.session_state.nombre_base}-HUB.xlsx", type="primary")
-            else:
-                # WhatsApp segmentado de a 100 filas y siempre sin encabezados
-                grid = st.columns(3)
-                for i in range(0, total_filas, 100):
-                    chunk = df_res.iloc[i : i + 100]
-                    parte = (i // 100) + 1
-                    out_chunk = io.BytesIO()
-                    with pd.ExcelWriter(out_chunk, engine='xlsxwriter') as writer:
-                        chunk.to_excel(writer, index=False, header=False)
-                    with grid[(i//100) % 3]:
-                        st.download_button(label=f"📥 Parte {parte} ({len(chunk)} filas)", data=out_chunk.getvalue(), file_name=f"{st.session_state.nombre_base}-WSP_{parte}.xlsx")
-            
-            st.write("### 👁️ Vista previa de los datos generados:")
-            st.dataframe(df_res)
-
-    except Exception as e:
-        st.error(f"Error en el procesamiento: {e}")
-
-st.divider()
-if st.button("➕ Nueva Carga"):
-    reiniciar_aplicacion()
-    st.rerun()
+                    df_excel['id_match'] = df_excel
