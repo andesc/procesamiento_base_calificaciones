@@ -184,7 +184,6 @@ if archivo_csv:
             df_canvas['id_match'] = df_canvas['sis user id'].apply(forzar_id_string)
             df_canvas['actividad_limpia'] = df_canvas['assignment name'].apply(homologar_actividad)
             
-            # Variables de configuración visual según disponibilidad de Excel
             materias_seleccionadas = []
             actividad_objetivo = "API 1"
             
@@ -208,18 +207,14 @@ if archivo_csv:
                     ejecutar_calculo = True
             
             if ejecutar_calculo:
-                # CORREGIDO: Si es WhatsApp y no hay Excel, procesa directo usando solo Canvas
                 if not archivo_xlsx:
-                    # En submissions, los cumplidores son 'submitted' o 'graded'
                     cumplidores = df_canvas[
                         (df_canvas['actividad_limpia'] == actividad_objetivo) & 
                         (df_canvas['workflow state'].isin(['submitted', 'graded']))
                     ]['id_match'].unique()
                     
-                    # Los deudores son los que están en el reporte pero no entregaron esa actividad
                     df_deudores = df_canvas[~df_canvas['id_match'].isin(cumplidores)].copy()
                     
-                    # Mapear columnas nativas de Canvas Submissions
                     col_user_name = 'user name' if 'user name' in df_deudores.columns else df_deudores.columns[0]
                     df_deudores['nombre'] = df_deudores[col_user_name].apply(extraer_primer_nombre)
                     df_deudores['materia'] = df_deudores['course name'].astype(str).str.strip().str.upper()
@@ -238,7 +233,6 @@ if archivo_csv:
                         
                     st.session_state.df_resultado = df_base_wsp[columnas_salida]
                 else:
-                    # Lógica con Excel (Cruce avanzado)
                     df_universo = df_excel.copy()
                     if materias_seleccionadas:
                         df_universo = df_universo[df_universo['materia'].isin(materias_seleccionadas)]
@@ -298,4 +292,128 @@ if archivo_csv:
                 materia_archivo = "MATERIA_DETECTADA"
                 
             materia_archivo_limpia = limpiar_texto(materia_archivo)
-            aplicar_exclusion = any(x in materia_archivo_limpia for x in
+            # CORREGIDO: Línea unificada en una sola expresión limpia
+            aplicar_exclusion = any(x in materia_archivo_limpia for x in ["API", "AP"])
+            
+            ejecutar_calculo = False
+            if opcion_base == "Base para HubSpot" and not archivo_xlsx:
+                st.warning("⚠️ Para generar una base estructurada para **HubSpot**, es necesario que cargues el Excel para mapear la columna de Email obligatoria.")
+            else:
+                if st.button("⚡ Generar Base y Estadísticas", type="primary"):
+                    ejecutar_calculo = True
+
+            if ejecutar_calculo:
+                if not archivo_xlsx:
+                    if aplicar_exclusion and materia_archivo_limpia in LISTA_NEGRA_LIMPIA:
+                        st.warning(f"🚫 La materia '{materia_archivo.upper()}' está en la lista de exclusión de APIs.")
+                        df_final = pd.DataFrame(columns=['dni', 'nombre', 'materia'])
+                    else:
+                        df_canvas['dni'] = df_canvas['id_match']
+                        df_canvas['nombre'] = df_canvas['Student'].apply(extraer_primer_nombre)
+                        df_canvas['materia'] = materia_archivo.strip().upper()
+                        df_final = df_canvas.drop_duplicates(subset=['dni']).copy()
+                    
+                    if opcion_base == "Base para HubSpot":
+                        st.session_state.df_resultado = pd.DataFrame(columns=['email'])
+                    else:
+                        columnas_salida = ['dni']
+                        for param in sorted(config_parametros.keys(), key=int):
+                            conf = config_parametros[param]
+                            col_name = f"param_{param}"
+                            if conf["tipo"] == "✍️ Texto Fijo (Manual)":
+                                df_final[col_name] = conf["valor_manual"]
+                            else:
+                                df_final[col_name] = df_final[conf["tipo"]]
+                            columnas_salida.append(col_name)
+                        st.session_state.df_resultado = df_final[columnas_salida]
+                else:
+                    df_excel = pd.read_excel(archivo_xlsx)
+                    df_excel.columns = df_excel.columns.str.strip().str.lower()
+                    
+                    col_id_excel = 'dni' if 'dni' in df_excel.columns else ('id_alumno' if 'id_alumno' in df_excel.columns else df_excel.columns[0])
+                    df_excel['id_match'] = df_excel[col_id_excel].apply(forzar_id_string)
+                    df_excel['materia_match'] = df_excel['materia'].apply(limpiar_texto)
+                    
+                    df_universo = df_excel.copy()
+                    if aplicar_exclusion:
+                        df_universo = df_universo[~df_universo['materia_match'].isin(LISTA_NEGRA_LIMPIA)]
+                    
+                    df_cruce = pd.merge(df_canvas, df_universo, on='id_match', how='inner')
+                    df_cruce['dni'] = df_cruce['id_match']  
+                    df_cruce['nombre'] = df_cruce['Student'].apply(extraer_primer_nombre)
+                    df_cruce['materia'] = materia_archivo.strip().upper()
+                    
+                    if opcion_base == "Base para HubSpot":
+                        st.session_state.df_resultado = df_cruce[['email']].dropna().drop_duplicates()
+                    else:
+                        df_base_wsp = df_cruce.drop_duplicates(subset=['dni', 'materia']).copy()
+                        columnas_salida = ['dni']
+                        for param in sorted(config_parametros.keys(), key=int):
+                            conf = config_parametros[param]
+                            col_name = f"param_{param}"
+                            if conf["tipo"] == "✍️ Texto Fijo (Manual)":
+                                df_base_wsp[col_name] = conf["valor_manual"]
+                            else:
+                                df_base_wsp[col_name] = df_base_wsp[conf["tipo"]]
+                            columnas_salida.append(col_name)
+                        st.session_state.df_resultado = df_base_wsp[columnas_salida]
+                
+                st.session_state.nombre_base = f"Base_{materia_archivo.replace(' ', '_')}"
+                st.session_state.procesado = True
+
+        # ==========================================
+        # --- RENDERIZADO, ESTADÍSTICAS Y DESCARGAS ---
+        # ==========================================
+        if st.session_state.procesado and 'df_resultado' in st.session_state:
+            df_res = st.session_state.df_resultado
+            total_filas = len(df_res)
+            
+            st.markdown("## 📊 Panel de Control y Estadísticas")
+            m1, m2 = st.columns(2)
+            with m1:
+                st.metric("Total de Registros en la Base", f"{total_filas} filas")
+            with m2:
+                col_unica = 'email' if opcion_base == "Base para HubSpot" else 'dni'
+                cant_unicos = df_res[col_unica].nunique() if col_unica in df_res.columns else total_filas
+                st.metric("Alumnos Únicos Afectados", f"{cant_unicos} alumnos")
+            
+            col_materia_stats = None
+            if opcion_base == "Base para Whatsapp":
+                for param, conf in config_parametros.items():
+                    if conf["tipo"] == "materia":
+                        col_materia_stats = f"param_{param}"
+            elif es_submissions:
+                col_materia_stats = 'materia'
+                
+            if col_materia_stats and col_materia_stats in df_res.columns:
+                st.write("### 📈 Top Materias con Mayor Cantidad de Reclamos")
+                conteo_materias = df_res[col_materia_stats].value_counts().reset_index()
+                conteo_materias.columns = ['Materia', 'Cantidad']
+                st.bar_chart(data=conteo_materias.head(10), x='Materia', y='Cantidad', color="#ff4b4b")
+            
+            st.divider()
+            
+            st.write("### 📥 Descargar Archivos Excel")
+            output = io.BytesIO()
+            if opcion_base == "Base para HubSpot":
+                with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
+                    df_res.to_excel(writer, index=False, header=True)
+                st.download_button(label=f"📥 Descargar Base HubSpot ({total_filas} filas)", data=output.getvalue(), file_name=f"{st.session_state.nombre_base}-HUB.xlsx", type="primary")
+            else:
+                grid = st.columns(3)
+                for i in range(0, total_filas, 100):
+                    chunk = df_res.iloc[i : i + 100]
+                    parte = (i // 100) + 1
+                    out_chunk = io.BytesIO()
+                    with pd.ExcelWriter(out_chunk, engine='xlsxwriter') as writer:
+                        chunk.to_excel(writer, index=False, header=False)
+                    with grid[(i//100) % 3]:
+                        st.download_button(label=f"📥 Parte {parte} ({len(chunk)} filas)", data=out_chunk.getvalue(), file_name=f"{st.session_state.nombre_base}-WSP_{parte}.xlsx")
+            
+            st.write("### 👁️ Vista previa de los datos generados:")
+            st.dataframe(df_res)
+
+st.divider()
+if st.button("➕ Nueva Carga"):
+    reiniciar_aplicacion()
+    st.rerun()
