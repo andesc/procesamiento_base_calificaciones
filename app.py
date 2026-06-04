@@ -132,4 +132,38 @@ if archivo_csv:
         contenido = archivo_csv.read()
         try:
             df_canvas = pd.read_csv(io.BytesIO(contenido), sep=',', engine='python', on_bad_lines='skip')
-            if
+            if df_canvas.shape[1] <= 1: raise ValueError
+        except:
+            df_canvas = pd.read_csv(io.BytesIO(contenido), sep=';', engine='python', on_bad_lines='skip')
+            
+        # Normalización inicial de columnas de Canvas
+        df_canvas.columns = df_canvas.columns.str.strip()
+        cols_canvas_lower = [c.lower() for c in df_canvas.columns]
+        
+        # Determinar tipo de reporte de Canvas
+        es_submissions = 'sis user id' in cols_canvas_lower and 'assignment name' in cols_canvas_lower
+
+        # ==========================================
+        # --- CASO 1: REPORTE DE ENTREGAS (SUBMISSIONS) ---
+        # ==========================================
+        if es_submissions:
+            if not archivo_xlsx:
+                st.warning("⚠️ El reporte detectado es de **Submissions (Entregas)**. Para este formato, el archivo '2. Base de Alumnos (XLSX)' es obligatorio para poder calcular las exclusiones.")
+            else:
+                st.success("📂 **Reporte de Entregas (Submissions) detectado con éxito.**")
+                df_excel = pd.read_excel(archivo_xlsx)
+                df_excel.columns = df_excel.columns.str.strip().str.lower()
+                df_canvas.columns = cols_canvas_lower
+                df_canvas = df_canvas.dropna(subset=['sis user id'])
+                
+                # Mapeo de IDs usando 'id_alumno' o 'dni' como clave del Excel según lo que venga
+                col_id_excel = 'id_alumno' if 'id_alumno' in df_excel.columns else 'dni'
+                df_excel['id_match'] = df_excel[col_id_excel].apply(forzar_id_string)
+                df_canvas['id_match'] = df_canvas['sis user id'].apply(forzar_id_string)
+                
+                df_excel['materia_match'] = df_excel['materia'].apply(limpiar_texto)
+                df_canvas['materia_match'] = df_canvas['course name'].apply(limpiar_texto)
+                df_canvas['actividad_limpia'] = df_canvas['assignment name'].apply(homologar_actividad)
+                
+                materias_disponibles = sorted(df_excel['materia'].dropna().unique())
+                materias_seleccion
