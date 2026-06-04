@@ -95,15 +95,15 @@ with st.expander("📌 Instrucciones de uso - LEER AQUÍ"):
         st.markdown("""
         **Para generar la Base de HubSpot (Solo columna Email):**
         1. **Reporte de Canvas (CSV):** Subí el archivo de Canvas (puede ser el reporte de *Submissions* o el de *Calificaciones estándar*).
-        2. **Base de Alumnos (XLSX):** Subí el Excel de invitaciones. Es obligatorio para extraer el correo de los deudores absolutos.
+        2. **Base de Alumnos (XLSX):** Subí el Excel de Invitaciones. Es obligatorio para extraer el correo de los deudores absolutos.
         3. El archivo resultante contendrá **únicamente la columna `email`** con encabezado.
         """)
     else:
         st.markdown("""
         **Para generar la Base de WhatsApp (Segmentada de a 100):**
         1. **Reporte de Canvas (CSV):** Subí tu archivo de Canvas.
-        2. **Base de Alumnos (XLSX - Opcional para Calificaciones):** Si usás el reporte de *Calificaciones estándar*, podés dejarlo vacío (obtendrás Nombre y Materia). Si usás el de *Submissions*, es obligatorio para calcular las exclusiones.
-        3. El archivo resultante organizará las columnas como **`dni`, `nombre`, `materia`** (si se dispone del Excel) **siempre sin encabezados**.
+        2. **Base de Alumnos (XLSX - Opcional para Calificaciones):** Si usás el reporte de *Calificaciones estándar*, podés dejarlo vacío (se usará el SIS Login ID como DNI). Si usás el de *Submissions*, es obligatorio para calcular las exclusiones.
+        3. El archivo resultante organizará las columnas como **`dni`, `nombre`, `materia`** (y `celular` si existe) **siempre sin encabezados**.
         """)
 
 col1, col2 = st.columns(2)
@@ -129,6 +129,7 @@ if archivo_csv:
         # Determinar tipo de reporte de Canvas
         es_submissions = 'sis user id' in cols_canvas_lower and 'assignment name' in cols_canvas_lower
 
+        # --- CASO 1: REPORTE DE ENTREGAS (SUBMISSIONS) ---
         if es_submissions:
             if not archivo_xlsx:
                 st.warning("⚠️ El reporte detectado es de **Submissions (Entregas)**. Para este formato, el archivo '2. Base de Alumnos (XLSX)' es obligatorio para poder calcular las exclusiones.")
@@ -191,11 +192,12 @@ if archivo_csv:
                     st.session_state.nombre_base = f"Faltan_{actividad_objetivo.replace(' ', '_')}"
                     st.session_state.procesado = True
 
+        # --- CASO 2: REPORTE DE CALIFICACIONES ESTÁNDAR ---
         else:
-            # --- CASO: REPORTE DE CALIFICACIONES ESTÁNDAR ---
             st.success("📂 **Reporte de Calificaciones estándar detectado con éxito.**")
             df_canvas = df_canvas[~df_canvas['Student'].str.contains('Points|Possible', case=False, na=False)]
             
+            # Mapeo de ID de Canvas (SIS Login ID actúa como el DNI nativo de la plataforma)
             col_id_canvas = 'SIS Login ID' if 'SIS Login ID' in df_canvas.columns else ('SIS User ID' if 'SIS User ID' in df_canvas.columns else df_canvas.columns[1])
             df_canvas['id_match'] = df_canvas[col_id_canvas].apply(forzar_id_string)
             
@@ -215,19 +217,20 @@ if archivo_csv:
                     ejecutar_calculo = True
 
             if ejecutar_calculo:
-                # Sub-caso A: No cargó el Excel pero va para WhatsApp (Procesamiento rápido directo de Canvas)
+                # Sub-caso A: Sin Excel (Procesamiento directo de Canvas para WhatsApp)
                 if not archivo_xlsx:
                     if aplicar_exclusion and materia_archivo_limpia in LISTA_NEGRA_LIMPIA:
                         st.warning(f"🚫 La materia '{materia_archivo.upper()}' está en la lista de exclusión de APIs.")
-                        df_final = pd.DataFrame(columns=['nombre', 'materia'])
+                        df_final = pd.DataFrame(columns=['dni', 'nombre', 'materia'])
                     else:
+                        df_canvas['dni'] = df_canvas['id_match'] # SIS Login ID se vuelve el DNI directo
                         df_canvas['nombre'] = df_canvas['Student'].apply(extraer_primer_nombre)
                         df_canvas['materia'] = materia_archivo.strip().upper()
-                        df_final = df_canvas[['nombre', 'materia']].copy()
+                        df_final = df_canvas[['dni', 'nombre', 'materia']].copy()
                     
                     st.session_state.df_resultado = df_final.drop_duplicates()
                 
-                # Sub-caso B: Sí cargó el Excel (Cruce completo con DNI, Celular, etc.)
+                # Sub-caso B: Con Excel (Cruce tradicional completo)
                 else:
                     df_excel = pd.read_excel(archivo_xlsx)
                     df_excel.columns = df_excel.columns.str.strip().str.lower()
@@ -245,7 +248,7 @@ if archivo_csv:
                     if opcion_base == "Base para HubSpot":
                         st.session_state.df_resultado = df_cruce[['email']].dropna().drop_duplicates()
                     else:
-                        # WhatsApp estructurado: dni, nombre, materia, (celular)
+                        # WhatsApp estructurado completo: dni, nombre, materia, (celular)
                         columnas_wsp = ['dni', 'nombre_final', 'materia_final']
                         if 'celular' in df_cruce.columns:
                             df_cruce['celular'] = df_cruce['celular'].fillna('').astype(str)
