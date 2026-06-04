@@ -108,7 +108,7 @@ with st.expander("📌 Instrucciones de uso - LEER AQUÍ"):
         st.markdown("""
         **Para generar la Base de HubSpot (Solo columna Email):**
         1. **Reporte de Canvas (CSV):** Subí el archivo de Canvas.
-        2. **Base de Alumnos (XLSX):** Subí el Excel de avance (*Query*). Es obligatorio para extraer el correo.
+        2. **Base de Alumnos (XLSX):** Subí el Excel de invitaciones. Es obligatorio para extraer el correo.
         3. El archivo resultante contendrá **únicamente la columna `email`** con encabezado.
         """)
     else:
