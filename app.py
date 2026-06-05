@@ -138,36 +138,32 @@ if archivo_csv:
         st.error(f"Error crítico al leer el archivo CSV de Canvas: {e}")
 
     if df_canvas is not None:
-        # Normalizamos nombres de columnas eliminando espacios extremos
-        df_canvas.columns = df_canvas.columns.str.strip()
-        cols_canvas_lower = [c.lower() for c in df_canvas.columns]
+        df_canvas.columns = df_canvas.columns.str.strip().str.lower()
         
-        # Identificar si es un reporte de Submissions (Entregas) buscando "canvas user id" o "sis user id"
-        es_submissions = 'canvas user id' in cols_canvas_lower and 'assignment name' in cols_canvas_lower
+        # Identificación estricta de Submissions usando la columna en minúscula completa
+        es_submissions = 'canvas user id' in df_canvas.columns and 'assignment name' in df_canvas.columns
 
         # ==================================================
-        # --- CASO 1: REPORTE DE ENTREGAS (SUBMISSIONS) ---
+        # --- CASO 1: REPORTE DE ENTREAS (SUBMISSIONS) ---
         # ==================================================
         if es_submissions:
             st.success("📂 **Reporte de Entregas (Submissions) detectado con éxito.**")
-            df_canvas.columns = cols_canvas_lower
             
-            # Forzar ID desde 'canvas user id' según requerimiento explícito
             df_canvas = df_canvas.dropna(subset=['canvas user id'])
             df_canvas['id_match'] = df_canvas['canvas user id'].apply(forzar_id_string)
             df_canvas['actividad_limpia'] = df_canvas['assignment name'].apply(homologar_actividad)
+            df_canvas['materia_match'] = df_canvas['course name'].apply(limpiar_texto)
             
             materias_seleccionadas = []
             if archivo_xlsx:
                 df_excel = pd.read_excel(archivo_xlsx)
                 df_excel.columns = df_excel.columns.str.strip().str.lower()
                 
-                # Mapear llave desde 'canvas_id' en el Excel según requerimiento explícito
+                # Forzar enlace estricto con 'canvas_id' desde el Excel
                 col_id_excel = 'canvas_id' if 'canvas_id' in df_excel.columns else 'dni'
                 df_excel['id_match'] = df_excel[col_id_excel].apply(forzar_id_string)
                 df_excel['materia_match'] = df_excel['materia'].apply(limpiar_texto)
                 
-                # Restauración del filtro por materias del Excel
                 materias_disponibles = sorted(df_excel['materia'].dropna().unique())
                 materias_seleccionadas = st.multiselect("Seleccionar Materias a evaluar (Vacío = Todas):", materias_disponibles)
             
@@ -182,7 +178,7 @@ if archivo_csv:
             
             if ejecutar_calculo:
                 if not archivo_xlsx:
-                    # WhatsApp sin Excel: Procesamos directo usando la información nativa de Canvas
+                    # LÓGICA DIRECTA CANVAS (WhatsApp sin Excel)
                     cumplidores = df_canvas[
                         (df_canvas['actividad_limpia'] == actividad_objetivo) & 
                         (df_canvas['workflow state'].isin(['submitted', 'graded']))
@@ -195,22 +191,19 @@ if archivo_csv:
                     df_deudores['materia'] = df_deudores['course name'].astype(str).str.strip().str.upper()
                     df_deudores['dni'] = df_deudores['id_match']
                     
-                    # Aplicar exclusión de materias si aplica
                     if "API" in actividad_objetivo.upper():
-                        df_deudores['materia_limpia_check'] = df_deudores['materia'].apply(limpiar_texto)
-                        df_deudores = df_deudores[~df_deudores['materia_limpia_check'].isin(LISTA_NEGRA_LIMPIA)]
+                        df_deudores = df_deudores[~df_deudores['materia_match'].isin(LISTA_NEGRA_LIMPIA)]
                     
                     df_base_wsp = df_deudores.drop_duplicates(subset=['dni', 'materia']).copy()
                     st.session_state.df_resultado = df_base_wsp[['dni', 'nombre', 'materia']]
                 else:
-                    # Cruce avanzado con Excel
+                    # CRUCE AVANZADO CON EXCEL
                     df_universo = df_excel.copy()
+                    
+                    # Aplicar filtro selectivo de materias si se seleccionó alguna en el componente
                     if materias_seleccionadas:
                         df_universo = df_universo[df_universo['materia'].isin(materias_seleccionadas)]
                     
-                    df_canvas['materia_match'] = df_canvas['course name'].apply(limpiar_texto)
-                    
-                    # Aplicar exclusión de la lista negra de materias
                     if "API" in actividad_objetivo.upper():
                         df_universo = df_universo[~df_universo['materia_match'].isin(LISTA_NEGRA_LIMPIA)]
                     
@@ -244,9 +237,9 @@ if archivo_csv:
         # ========================================================
         else:
             st.success("📂 **Reporte de Calificaciones estándar detectado con éxito.**")
-            df_canvas = df_canvas[~df_canvas['Student'].str.contains('Points|Possible', case=False, na=False)]
+            df_canvas = df_canvas[~df_canvas['student'].str.contains('Points|Possible', case=False, na=False)]
             
-            col_id_canvas = 'SIS Login ID' if 'SIS Login ID' in df_canvas.columns else ('SIS User ID' if 'SIS User ID' in df_canvas.columns else df_canvas.columns[1])
+            col_id_canvas = 'sis login id' if 'sis login id' in df_canvas.columns else ('sis user id' if 'sis user id' in df_canvas.columns else df_canvas.columns[1])
             df_canvas['id_match'] = df_canvas[col_id_canvas].apply(forzar_id_string)
             
             try:
@@ -266,76 +259,20 @@ if archivo_csv:
 
             if ejecutar_calculo:
                 if not archivo_xlsx:
-                    # WhatsApp sin Excel
                     if aplicar_exclusion and materia_archivo_limpia in LISTA_NEGRA_LIMPIA:
                         st.warning(f"🚫 La materia '{materia_archivo.upper()}' pertenece a la lista de exclusión automática.")
                         df_final = pd.DataFrame(columns=['dni', 'nombre', 'materia'])
                     else:
                         df_canvas['dni'] = df_canvas['id_match']
-                        df_canvas['nombre'] = df_canvas['Student'].apply(extraer_primer_nombre)
+                        df_canvas['nombre'] = df_canvas['student'].apply(extraer_primer_nombre)
                         df_canvas['materia'] = materia_archivo.strip().upper()
                         df_final = df_canvas.drop_duplicates(subset=['dni']).copy()
                     
                     st.session_state.df_resultado = df_final[['dni', 'nombre', 'materia']]
                 else:
-                    # Cruce con Excel de Alumnos
                     df_excel = pd.read_excel(archivo_xlsx)
                     df_excel.columns = df_excel.columns.str.strip().str.lower()
                     
                     col_id_excel = 'canvas_id' if 'canvas_id' in df_excel.columns else ('dni' if 'dni' in df_excel.columns else df_excel.columns[0])
                     df_excel['id_match'] = df_excel[col_id_excel].apply(forzar_id_string)
-                    df_excel['materia_match'] = df_excel['materia'].apply(limpiar_texto)
-                    
-                    df_universo = df_excel.copy()
-                    if aplicar_exclusion:
-                        df_universo = df_universo[~df_universo['materia_match'].isin(LISTA_NEGRA_LIMPIA)]
-                    
-                    df_cruce = pd.merge(df_canvas, df_universo, on='id_match', how='inner')
-                    df_cruce['dni'] = df_cruce['id_match']  
-                    df_cruce['nombre'] = df_cruce['Student'].apply(extraer_primer_nombre)
-                    df_cruce['materia'] = materia_archivo.strip().upper()
-                    
-                    if opcion_base == "Base para HubSpot":
-                        st.session_state.df_resultado = df_cruce[['email']].dropna().drop_duplicates()
-                    else:
-                        df_base_wsp = df_cruce.drop_duplicates(subset=['dni', 'materia']).copy()
-                        st.session_state.df_resultado = df_base_wsp[['dni', 'nombre', 'materia']]
-                
-                st.session_state.nombre_base = f"Base_{materia_archivo.replace(' ', '_')}"
-                st.session_state.procesado = True
-
-        # ==================================================
-        # --- SECCIÓN DE DESCARGA Y VISTA PREVIA RIGIDA ---
-        # ==================================================
-        if st.session_state.procesado and 'df_resultado' in st.session_state:
-            df_res = st.session_state.df_resultado
-            total_filas = len(df_res)
-            
-            st.divider()
-            st.write(f"### 📥 Descargar Archivos Resultantes ({total_filas} registros encontrados)")
-            
-            output = io.BytesIO()
-            if opcion_base == "Base para HubSpot":
-                with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
-                    df_res.to_excel(writer, index=False, header=True)
-                st.download_button(label=f"📥 Descargar Base HubSpot (.xlsx)", data=output.getvalue(), file_name=f"{st.session_state.nombre_base}-HUB.xlsx", type="primary")
-            else:
-                # Segmentación estricta de a 100 filas SIN encabezados para WhatsApp
-                grid = st.columns(3)
-                for i in range(0, total_filas, 100):
-                    chunk = df_res.iloc[i : i + 100]
-                    parte = (i // 100) + 1
-                    out_chunk = io.BytesIO()
-                    with pd.ExcelWriter(out_chunk, engine='xlsxwriter') as writer:
-                        # index=False y header=False remueve los títulos de columnas por completo
-                        chunk.to_excel(writer, index=False, header=False)
-                    with grid[(i//100) % 3]:
-                        st.download_button(label=f"📥 Descargar Parte {parte} ({len(chunk)} filas)", data=out_chunk.getvalue(), file_name=f"{st.session_state.nombre_base}-WSP_{parte}.xlsx")
-            
-            st.write("### 👁️ Vista previa de los datos generados:")
-            st.dataframe(df_res)
-
-st.divider()
-if st.button("➕ Nueva Carga"):
-    reiniciar_aplicacion()
-    st.rerun()
+                    df_excel['materia_match']
