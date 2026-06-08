@@ -18,6 +18,22 @@ def limpiar_texto(texto):
     texto = str(texto).upper().strip()
     return texto.replace('Ñ', 'NI').replace('Á', 'A').replace('É', 'E').replace('Í', 'I').replace('Ó', 'O').replace('Ú', 'U')
 
+def limpiar_datos_hubspot(val):
+    """Limpia tildes y convierte la Ñ en N para compatibilidad estricta con HubSpot/Meta"""
+    if pd.isna(val): return ""
+    s = str(val).strip()
+    # Reemplazo de Ñ/ñ por N/n
+    s = s.replace('Ñ', 'N').replace('ñ', 'n')
+    # Remover tildes manteniendo el texto original (ya sea mayúscula o minúscula)
+    remplazos = {
+        'Á': 'A', 'É': 'E', 'Í': 'I', 'Ó': 'O', 'Ú': 'U',
+        'á': 'a', 'é': 'e', 'í': 'i', 'ó': 'o', 'ú': 'u',
+        'Ü': 'U', 'ü': 'u'
+    }
+    for orig, dest in remplazos.items():
+        s = s.replace(orig, dest)
+    return s
+
 def extraer_primer_nombre(celda):
     s = str(celda).strip()
     parte_nombre = s.split(",")[1].strip() if "," in s else s
@@ -67,6 +83,9 @@ with col1:
 with col2:
     archivo_xlsx = st.file_uploader("2. Base de Alumnos (XLSX - Requerido para Submissions)", type=["xlsx"], key=f"xlsx_{st.session_state.count}")
 
+# Variable de control para saber si tenemos los archivos mínimos requeridos
+archivos_listos = False
+
 if archivo_csv:
     contenido_bytes = archivo_csv.getvalue()
     try:
@@ -78,70 +97,73 @@ if archivo_csv:
     df_canvas_raw.columns = df_canvas_raw.columns.str.strip()
     cols_lower = [c.lower() for c in df_canvas_raw.columns]
     
-    # Identificación inequívoca del tipo de reporte
     es_submissions = 'canvas user id' in cols_lower and 'assignment name' in cols_lower
 
-    st.markdown("### 🔍 Parámetros de Búsqueda")
-    
-    if es_submissions:
-        st.info("📂 **Reporte de Entregas (Submissions) detectado.** _Nota: Requiere cruzarse con Excel obligatoriamente._")
-        idx_m = cols_lower.index('course name') if 'course name' in cols_lower else 0
-        materias_disponibles = sorted(df_canvas_raw[df_canvas_raw.columns[idx_m]].dropna().unique())
-        
-        materias_seleccionadas = st.multiselect("Seleccionar Materias (Vacío = Todas):", options=materias_disponibles)
-        actividad_objetivo = st.selectbox("Selecciona la actividad a reclamar:", ["API 1", "API 2", "API 3", "API 4", "AE 1", "AE 2", "AE 3", "AE 4"])
+    # VALIDACIÓN PEDIDO: Verificar si se cumplen las condiciones de carga antes de mostrar filtros
+    if es_submissions and not archivo_xlsx:
+        st.warning("⚠️ **Archivo intermedio requerido:** Detectamos un reporte de Submissions. Por favor, carga la Base de Alumnos (XLSX) para activar los filtros y poder procesar.")
+    elif not es_submissions and opcion_base == "Base para HubSpot" and not archivo_xlsx:
+        st.warning("⚠️ **Archivo intermedio requerido:** Para generar bases de HubSpot desde Calificaciones es obligatorio cargar el archivo Excel para obtener los correos.")
     else:
-        st.info("📂 **Reporte de Calificaciones estándar detectado.**")
-        st.markdown("*Este reporte procesa la materia completa de manera directa.*")
-        materias_seleccionadas = []
-        actividad_objetivo = "Materia Completa"
+        archivos_listos = True
 
-    # --- CONFIGURACIÓN DEL TEMPLATE ANTES DE EJECUTAR ---
-    texto_template = ""
-    dict_mapeo_params = {}
-    params_detectados = []
-
-    if opcion_base == "Base para Whatsapp":
-        st.markdown("---")
-        st.markdown("### 📝 Configuración opcional: Template de Meta")
-        texto_template = st.text_area(
-            "Pegá el contenido de tu plantilla de Meta aquí si deseas estructurar las columnas de salida:",
-            placeholder="Hola {{1}}, recordá entregar la actividad de {{2}}.",
-            key="template_meta_antepuesto"
-        )
+    # SI PASA LAS VALIDACIONES, SE CARGAN LOS FILTROS Y PARÁMETROS
+    if archivos_listos:
+        st.markdown("### 🔍 Parámetros de Búsqueda")
         
-        params_detectados = sorted(list(set(re.findall(r'\{\{(\d+)\}\}', texto_template))), key=int)
-        if params_detectados:
-            st.info(f"💡 Variables dinámicas detectadas: {len(params_detectados)}")
-            cols_p = st.columns(min(len(params_detectados), 4))
+        if es_submissions:
+            st.info("📂 **Reporte de Entregas (Submissions) detectado.**")
+            idx_m = cols_lower.index('course name') if 'course name' in cols_lower else 0
+            materias_disponibles = sorted(df_canvas_raw[df_canvas_raw.columns[idx_m]].dropna().unique())
             
-            for idx, p in enumerate(params_detectados):
-                with cols_p[idx % 4]:
-                    seleccion = st.selectbox(
-                        f"Variable {{{{ {p} }}}}:", 
-                        options=["dni", "nombre", "materia", "actividad", "✍️ Texto Fijo"], 
-                        key=f"sel_{p}"
-                    )
-                    if seleccion == "✍️ Texto Fijo":
-                        txt_fijo = st.text_input(f"Texto fijo para {{{{ {p} }}}}:", key=f"fijo_{p}")
-                        dict_mapeo_params[p] = ("fijo", txt_fijo)
-                    else:
-                        dict_mapeo_params[p] = ("columna", seleccion)
-        st.markdown("---")
-
-    # Botón de ejecución directo
-    if st.button("🔍 Calcular Deudores Reales", type="primary"):
-        # Validaciones de seguridad de archivos según la nueva lógica analizada
-        if es_submissions and not archivo_xlsx:
-            st.error("⚠️ El reporte de Submissions no contiene los DNI nativos. Es obligatorio cargar el archivo Excel para procesar esta base.")
-        elif not es_submissions and opcion_base == "Base para HubSpot" and not archivo_xlsx:
-            st.error("⚠️ Para procesar bases de HubSpot desde Calificaciones es obligatorio cargar el archivo Excel para obtener los correos.")
+            materias_seleccionadas = st.multiselect("Seleccionar Materias (Vacío = Todas):", options=materias_disponibles)
+            actividad_objetivo = st.selectbox("Selecciona la actividad a reclamar:", ["API 1", "API 2", "API 3", "API 4", "AE 1", "AE 2", "AE 3", "AE 4"])
         else:
+            st.info("📂 **Reporte de Calificaciones estándar detectado.**")
+            st.markdown("*Este reporte procesa la materia completa de manera directa.*")
+            materias_seleccionadas = []
+            actividad_objetivo = "Materia Completa"
+
+        # --- CONFIGURACIÓN DEL TEMPLATE ---
+        texto_template = ""
+        dict_mapeo_params = {}
+        params_detectados = []
+
+        if opcion_base == "Base para Whatsapp":
+            st.markdown("---")
+            st.markdown("### 📝 Configuración opcional: Template de Meta")
+            texto_template = st.text_area(
+                "Pegá el contenido de tu plantilla de Meta aquí si deseas estructurar las columnas de salida:",
+                placeholder="Hola {{1}}, recordá entregar la actividad de {{2}}.",
+                key="template_meta_antepuesto"
+            )
+            
+            params_detectados = sorted(list(set(re.findall(r'\{\{(\d+)\}\}', texto_template))), key=int)
+            if params_detectados:
+                st.info(f"💡 Variables dinámicas detectadas: {len(params_detectados)}")
+                cols_p = st.columns(min(len(params_detectados), 4))
+                
+                for idx, p in enumerate(params_detectados):
+                    with cols_p[idx % 4]:
+                        seleccion = st.selectbox(
+                            f"Variable {{{{ {p} }}}}:", 
+                            options=["dni", "nombre", "materia", "actividad", "✍️ Texto Fijo"], 
+                            key=f"sel_{p}"
+                        )
+                        if seleccion == "✍️ Texto Fijo":
+                            txt_fijo = st.text_input(f"Texto fijo para {{{{ {p} }}}}:", key=f"fijo_{p}")
+                            dict_mapeo_params[p] = ("fijo", txt_fijo)
+                        else:
+                            dict_mapeo_params[p] = ("columna", seleccion)
+            st.markdown("---")
+
+        # Botón de ejecución directo
+        if st.button("🔍 Calcular Deudores Reales", type="primary"):
             df_canvas = df_canvas_raw.copy()
             df_canvas.columns = cols_lower
 
             # ==========================================
-            # --- CASO 1: SUBMISSIONS (SÓLO CRUCE EXCEL) ---
+            # --- CASO 1: SUBMISSIONS ---
             # ==========================================
             if es_submissions:
                 df_canvas = df_canvas.dropna(subset=['canvas user id'])
@@ -154,7 +176,6 @@ if archivo_csv:
                 if "API" in actividad_objetivo.upper():
                     df_canvas = df_canvas[~df_canvas['materia_match'].isin(LISTA_NEGRA_LIMPIA)]
 
-                # Identificar quiénes SÍ entregaron de forma correcta
                 entregas_validas = df_canvas[
                     (df_canvas['actividad_limpia'] == actividad_objetivo) & 
                     (df_canvas['workflow state'].isin(['submitted', 'graded']))
@@ -162,11 +183,9 @@ if archivo_csv:
                 entregas_validas['llave_cruce'] = entregas_validas['id_match'] + "_" + entregas_validas['materia_match']
                 lista_cumplidores = entregas_validas['llave_cruce'].unique()
 
-                # Lectura y procesamiento obligatorio del Excel
                 df_excel = pd.read_excel(archivo_xlsx)
                 df_excel.columns = df_excel.columns.str.strip().str.lower()
                 
-                # Identificación de columnas clave en el Excel
                 col_canvas_excel = 'canvas_id' if 'canvas_id' in df_excel.columns else ('canvas id' if 'canvas id' in df_excel.columns else 'id_alumno')
                 col_dni_excel = 'dni' if 'dni' in df_excel.columns else 'documento'
                 
@@ -180,20 +199,17 @@ if archivo_csv:
                     df_universo = df_universo[~df_universo['materia_match'].isin(LISTA_NEGRA_LIMPIA)]
                 
                 df_universo['llave_cruce'] = df_universo['id_match'] + "_" + df_universo['materia_match']
-                
-                # Filtrar del universo a los deudores reales (no están en la lista de cumplidores)
                 df_deudores = df_universo[~df_universo['llave_cruce'].isin(lista_cumplidores)].copy()
                 
                 col_n = 'nombres' if 'nombres' in df_deudores.columns else ('student' if 'student' in df_deudores.columns else df_deudores.columns[2])
                 df_deudores['nombre'] = df_deudores[col_n].apply(extraer_primer_nombre)
                 df_deudores['materia'] = df_deudores['materia'].astype(str).str.strip().str.upper()
-                df_deudores['dni'] = df_deudores[col_dni_excel].apply(forzar_id_string) # DNI real obtenido desde el Excel
+                df_deudores['dni'] = df_deudores[col_dni_excel].apply(forzar_id_string)
                 
                 if opcion_base == "Base para HubSpot":
                     df_resultado_crudo = df_deudores[['email']].dropna().drop_duplicates()
                 else:
                     df_resultado_crudo = df_deudores[['dni', 'nombre', 'materia']].drop_duplicates(subset=['dni', 'materia'])
-                    # Agrupar por dos materias si no hay filtros específicos
                     if not materias_seleccionadas:
                         mults = df_resultado_crudo['dni'].value_counts()
                         df_resultado_crudo.loc[df_resultado_crudo['dni'].isin(mults[mults >= 2].index), 'materia'] = "DOS MATERIAS"
@@ -207,7 +223,6 @@ if archivo_csv:
             else:
                 df_canvas = df_canvas[~df_canvas['student'].str.contains('Points|Possible', case=False, na=False)]
                 
-                # 'sis login id' almacena nativamente el DNI directo en Calificaciones
                 col_dni_canvas = 'sis login id' if 'sis login id' in cols_lower else ('sis user id' if 'sis user id' in cols_lower else df_canvas.columns[1])
                 df_canvas['id_match'] = df_canvas[col_dni_canvas].apply(forzar_id_string)
                 
@@ -218,7 +233,6 @@ if archivo_csv:
                 excluir = any(x in m_limpia for x in ["API", "AP"])
 
                 if not archivo_xlsx:
-                    # WhatsApp Directo desde el CSV de Calificaciones usando el ID nativo como DNI
                     if excluir and m_limpia in LISTA_NEGRA_LIMPIA:
                         st.warning(f"🚫 Materia '{m_archivo.upper()}' excluida.")
                         df_resultado_crudo = pd.DataFrame(columns=['dni', 'nombre', 'materia'])
@@ -229,7 +243,6 @@ if archivo_csv:
                         df_f['materia'] = m_archivo.strip().upper()
                         df_resultado_crudo = df_f.drop_duplicates(subset=['dni', 'materia'])
                 else:
-                    # Con Excel (Para HubSpot o si decidís cargarlo igual)
                     df_excel = pd.read_excel(archivo_xlsx)
                     df_excel.columns = df_excel.columns.str.strip().str.lower()
                     
@@ -239,7 +252,6 @@ if archivo_csv:
                     
                     if excluir: df_excel = df_excel[~df_excel['materia_match'].isin(LISTA_NEGRA_LIMPIA)]
                     
-                    # En calificaciones el cruce vuelve a ser por el identificador DNI directo
                     df_cruce = pd.merge(df_canvas, df_excel, on='id_match', how='inner')
                     
                     if opcion_base == "Base para HubSpot":
@@ -253,10 +265,15 @@ if archivo_csv:
 
                 st.session_state.nombre_base = f"Base_{m_archivo.replace(' ', '_')}"
 
-            # --- CONSTRUCCIÓN DE LA SALIDA SEGÚN TEMPLATE ---
-            if opcion_base == "Base para Whatsapp" and not df_resultado_crudo.empty:
+            # --- CONSTRUCCIÓN Y LIMPIEZA AD-HOC SEGÚN DESTINO ---
+            if opcion_base == "Base para HubSpot":
+                # PEDIDO: Limpieza estricta de mails/valores para HubSpot (remueve tildes y cambia Ñ por N)
+                for col in df_resultado_crudo.columns:
+                    df_resultado_crudo[col] = df_resultado_crudo[col].apply(limpiar_datos_hubspot)
+                st.session_state.df_final_procesado = df_resultado_crudo.copy()
+            else:
+                # Flujo normal de WhatsApp
                 df_resultado_crudo['actividad'] = actividad_objetivo
-                
                 if params_detectados:
                     df_meta_build = pd.DataFrame()
                     df_meta_build['dni'] = df_resultado_crudo['dni']
@@ -270,8 +287,6 @@ if archivo_csv:
                     st.session_state.df_final_procesado = df_meta_build.copy()
                 else:
                     st.session_state.df_final_procesado = df_resultado_crudo[['dni', 'nombre', 'materia', 'actividad']].copy()
-            else:
-                st.session_state.df_final_procesado = df_resultado_crudo.copy()
             
             st.session_state.opcion_base_guardada = opcion_base
             st.rerun()
@@ -283,7 +298,7 @@ if archivo_csv:
         opcion_guardada = st.session_state.get('opcion_base_guardada', opcion_base)
         
         st.divider()
-        st.success(f"✅ ¡Estructura de datos lista! Se generaron {total_filas} registros en base a las nuevas reglas de negocio.")
+        st.success(f"✅ ¡Estructura de datos lista! Se generaron {total_filas} registros.")
         
         st.write("### 📥 Descargar Archivos")
         output = io.BytesIO()
