@@ -8,9 +8,10 @@ st.set_page_config(page_title="Generador de bases", page_icon="🛠️")
 
 # --- FUNCIONES DE UTILERÍA ---
 def reiniciar_aplicacion():
-    st.session_state.count += 1
     if 'df_final_procesado' in st.session_state: del st.session_state.df_final_procesado
     if 'nombre_base' in st.session_state: del st.session_state.nombre_base
+    if 'opcion_base_guardada' in st.session_state: del st.session_state.opcion_base_guardada
+    st.session_state.count += 1
 
 def limpiar_texto(texto):
     if pd.isna(texto): return ""
@@ -121,7 +122,6 @@ if archivo_csv:
                         options=["dni", "nombre", "materia", "actividad", "✍️ Texto Fijo"], 
                         key=f"sel_{p}"
                     )
-                    
                     if seleccion == "✍️ Texto Fijo":
                         txt_fijo = st.text_input(f"Texto fijo para {{{{ {p} }}}}:", key=f"fijo_{p}")
                         dict_mapeo_params[p] = ("fijo", txt_fijo)
@@ -143,7 +143,6 @@ if archivo_csv:
             if es_submissions:
                 df_canvas = df_canvas.dropna(subset=['sis user id'])
                 
-                # Extracción correcta del DNI según el tipo de base
                 if opcion_base == "Base para Whatsapp" and 'canvas user id' in cols_lower:
                     df_canvas['id_match'] = df_canvas['canvas user id'].apply(forzar_id_string)
                 else:
@@ -172,3 +171,126 @@ if archivo_csv:
                     df_excel['materia_match'] = df_excel['materia'].apply(limpiar_texto)
                     
                     df_universo = df_excel.copy()
+                    if materias_seleccionadas:
+                        df_universo = df_universo[df_universo['materia'].isin(materias_seleccionadas)]
+                    if "API" in actividad_objetivo.upper():
+                        df_universo = df_universo[~df_universo['materia_match'].isin(LISTA_NEGRA_LIMPIA)]
+                    
+                    df_universo['llave_cruce'] = df_universo['id_match'] + "_" + df_universo['materia_match']
+                    df_deudores = df_universo[~df_universo['llave_cruce'].isin(lista_cumplidores)].copy()
+                    
+                    col_n = 'nombres' if 'nombres' in df_deudores.columns else ('student' if 'student' in df_deudores.columns else df_deudores.columns[2])
+                    df_deudores['nombre'] = df_deudores[col_n].apply(extraer_primer_nombre)
+                    df_deudores['materia'] = df_deudores['materia'].astype(str).str.strip().str.upper()
+                    df_deudores['dni'] = df_deudores['id_match']
+                    
+                    if opcion_base == "Base para HubSpot":
+                        df_resultado_crudo = df_deudores[['email']].dropna().drop_duplicates()
+                    else:
+                        df_resultado_crudo = df_deudores[['dni', 'nombre', 'materia']].drop_duplicates(subset=['dni', 'materia'])
+                else:
+                    df_canvas['llave_cruce'] = df_canvas['id_match'] + "_" + df_canvas['materia_match']
+                    df_deudores = df_canvas[~df_canvas['llave_cruce'].isin(lista_cumplidores)].copy()
+                    
+                    df_f = pd.DataFrame()
+                    df_f['dni'] = df_deudores['id_match']
+                    col_u = 'user name' if 'user name' in df_deudores.columns else 'sis user id'
+                    df_f['nombre'] = df_deudores[col_u].apply(extraer_primer_nombre)
+                    df_f['materia'] = df_deudores['course name'].astype(str).str.strip().str.upper()
+                    
+                    df_resultado_crudo = df_f.drop_duplicates(subset=['dni', 'materia'])
+
+                if opcion_base == "Base para Whatsapp" and not materias_seleccionadas:
+                    mults = df_resultado_crudo['dni'].value_counts()
+                    df_resultado_crudo.loc[df_resultado_crudo['dni'].isin(mults[mults >= 2].index), 'materia'] = "DOS MATERIAS"
+                    df_resultado_crudo = df_resultado_crudo.drop_duplicates(subset=['dni', 'materia'])
+                
+                st.session_state.nombre_base = f"Faltan_{actividad_objetivo.replace(' ', '_')}"
+
+            # ==========================================
+            # --- CASO 2: CALIFICACIONES ---
+            # ==========================================
+            else:
+                df_canvas = df_canvas[~df_canvas['student'].str.contains('Points|Possible', case=False, na=False)]
+                
+                if opcion_base == "Base para Whatsapp" and 'canvas user id' in cols_lower:
+                    df_canvas['id_match'] = df_canvas['canvas user id'].apply(forzar_id_string)
+                else:
+                    col_id_c = 'sis login id' if 'sis login id' in df_canvas.columns else ('sis user id' if 'sis user id' in df_canvas.columns else df_canvas.columns[1])
+                    df_canvas['id_match'] = df_canvas[col_id_c].apply(forzar_id_string)
+                
+                try: m_archivo = archivo_csv.name.split("Calificaciones-")[1].split(".")[0].replace("_", " ")
+                except: m_archivo = "MATERIA_DETECTADA"
+                
+                m_limpia = limpiar_texto(m_archivo)
+                excluir = any(x in m_limpia for x in ["API", "AP"])
+
+                if not archivo_xlsx:
+                    if excluir and m_limpia in LISTA_NEGRA_LIMPIA:
+                        st.warning(f"🚫 Materia '{m_archivo.upper()}' excluida.")
+                        df_resultado_crudo = pd.DataFrame(columns=['dni', 'nombre', 'materia'])
+                    else:
+                        df_f = pd.DataFrame()
+                        df_f['dni'] = df_canvas['id_match']
+                        df_f['nombre'] = df_canvas['student'].apply(extraer_primer_nombre)
+                        df_f['materia'] = m_archivo.strip().upper()
+                        df_resultado_crudo = df_f.drop_duplicates(subset=['dni', 'materia'])
+                else:
+                    df_excel = pd.read_excel(archivo_xlsx)
+                    df_excel.columns = df_excel.columns.str.strip().str.lower()
+                    col_id_e = 'dni' if 'dni' in df_excel.columns else ('id_alumno' if 'id_alumno' in df_excel.columns else df_excel.columns[0])
+                    df_excel['id_match'] = df_excel[col_id_e].apply(forzar_id_string)
+                    df_excel['materia_match'] = df_excel['materia'].apply(limpiar_texto)
+                    
+                    if excluir: df_excel = df_excel[~df_excel['materia_match'].isin(LISTA_NEGRA_LIMPIA)]
+                    df_cruce = pd.merge(df_canvas, df_excel, on='id_match', how='inner')
+                    
+                    if opcion_base == "Base para HubSpot":
+                        df_resultado_crudo = df_cruce[['email']].dropna().drop_duplicates()
+                    else:
+                        df_f = pd.DataFrame()
+                        df_f['dni'] = df_cruce['id_match']
+                        df_f['nombre'] = df_cruce['student'].apply(extraer_primer_nombre)
+                        df_f['materia'] = m_archivo.strip().upper()
+                        df_resultado_crudo = df_f.drop_duplicates(subset=['dni', 'materia'])
+
+                st.session_state.nombre_base = f"Base_{m_archivo.replace(' ', '_')}"
+
+            # --- ESTRUCTURACIÓN DEL RESULTADO EN SESIÓN ---
+            if opcion_base == "Base para Whatsapp" and not df_resultado_crudo.empty:
+                df_resultado_crudo['actividad'] = actividad_objetivo
+                
+                if params_detectados:
+                    df_meta_build = pd.DataFrame()
+                    df_meta_build['dni'] = df_resultado_crudo['dni']
+                    
+                    for p in params_detectados:
+                        tipo, valor = dict_mapeo_params[p]
+                        if tipo == "fijo":
+                            df_meta_build[f"param_{p}"] = valor
+                        else:
+                            df_meta_build[f"param_{p}"] = df_resultado_crudo[valor].values
+                    st.session_state.df_final_procesado = df_meta_build.copy()
+                else:
+                    st.session_state.df_final_procesado = df_resultado_crudo[['dni', 'nombre', 'materia', 'actividad']].copy()
+            else:
+                st.session_state.df_final_procesado = df_resultado_crudo.copy()
+            
+            st.session_state.opcion_base_guardada = opcion_base
+            st.rerun() # Fuerza a Streamlit a redibujar los datos guardados inmediatamente
+
+    # --- ZONA DE RENDERIZADO DE RESULTADOS INDEPENDIENTE ---
+    if 'df_final_procesado' in st.session_state:
+        df_final = st.session_state.df_final_procesado.copy()
+        total_filas = len(df_final)
+        opcion_guardada = st.session_state.get('opcion_base_guardada', opcion_base)
+        
+        st.divider()
+        st.success(f"✅ ¡Estructura de datos lista! Se generaron {total_filas} registros.")
+        
+        st.write("### 📥 Descargar Archivos")
+        output = io.BytesIO()
+        if opcion_guardada == "Base para HubSpot":
+            with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
+                df_final.to_excel(writer, index=False, header=True)
+            st.download_button(label=f"📥 Descargar Base HubSpot ({total_filas} filas)", data=output.getvalue(), file_name=f"{st.session_state.nombre_
