@@ -10,7 +10,7 @@ st.set_page_config(page_title="Generador de bases", page_icon="🛠️")
 def reiniciar_aplicacion():
     st.session_state.count += 1
     st.session_state.procesado = False
-    if 'df_resultado' in st.session_state: del st.session_state.df_resultado
+    if 'df_resultado_crudo' in st.session_state: del st.session_state.df_resultado_crudo
     if 'nombre_base' in st.session_state: del st.session_state.nombre_base
 
 def limpiar_texto(texto):
@@ -91,7 +91,7 @@ st.title("🛠️ Generador de bases")
 
 def al_cambiar_modo():
     st.session_state.procesado = False
-    if 'df_resultado' in st.session_state: del st.session_state.df_resultado
+    if 'df_resultado_crudo' in st.session_state: del st.session_state.df_resultado_crudo
     if 'nombre_base' in st.session_state: del st.session_state.nombre_base
 
 opcion_base = st.radio(
@@ -205,9 +205,9 @@ if archivo_csv:
                             df_deudores['dni'] = df_deudores['id_match']
                         
                         if opcion_base == "Base para HubSpot":
-                            st.session_state.df_resultado = df_deudores[['email']].dropna().drop_duplicates()
+                            st.session_state.df_resultado_crudo = df_deudores[['email']].dropna().drop_duplicates()
                         else:
-                            st.session_state.df_resultado = df_deudores.rename(columns={'nombre_final': 'nombre', 'materia_final': 'materia'}).drop_duplicates(subset=['dni', 'materia']).copy()
+                            st.session_state.df_resultado_crudo = df_deudores.rename(columns={'nombre_final': 'nombre', 'materia_final': 'materia'}).drop_duplicates(subset=['dni', 'materia']).copy()
                     else:
                         df_canvas['llave_cruce'] = df_canvas['id_match'] + "_" + df_canvas['materia_match']
                         df_deudores = df_canvas[~df_canvas['llave_cruce'].isin(lista_cumplidores)].copy()
@@ -218,14 +218,14 @@ if archivo_csv:
                         df_final_temp['nombre'] = df_deudores[col_user].apply(extraer_primer_nombre)
                         df_final_temp['materia'] = df_deudores['course name'].astype(str).str.strip().str.upper()
                         
-                        st.session_state.df_resultado = df_final_temp.drop_duplicates(subset=['dni', 'materia']).copy()
+                        st.session_state.df_resultado_crudo = df_final_temp.drop_duplicates(subset=['dni', 'materia']).copy()
 
                     if opcion_base == "Base para Whatsapp" and not materias_seleccionadas:
-                        df_res_temp = st.session_state.df_resultado
+                        df_res_temp = st.session_state.df_resultado_crudo
                         conteos = df_res_temp['dni'].value_counts()
                         dnis_multiples = conteos[conteos >= 2].index
                         df_res_temp.loc[df_res_temp['dni'].isin(dnis_multiples), 'materia'] = "DOS MATERIAS"
-                        st.session_state.df_resultado = df_res_temp.drop_duplicates(subset=['dni', 'materia'])
+                        st.session_state.df_resultado_crudo = df_res_temp.drop_duplicates(subset=['dni', 'materia'])
 
                     st.session_state.nombre_base = f"Faltan_{actividad_objetivo.replace(' ', '_')}"
                     st.session_state.procesado = True
@@ -247,30 +247,3 @@ if archivo_csv:
                 
             materia_archivo_limpia = limpiar_texto(materia_archivo)
             aplicar_exclusion = any(x in materia_archivo_limpia for x in ["API", "AP"])
-            
-            if st.button("🔍 Calcular Deudores Reales (Calificaciones)", type="primary"):
-                if not archivo_xlsx:
-                    if opcion_base == "Base para HubSpot":
-                        st.error("⚠️ Para generar una base estructurada para **HubSpot**, es necesario que cargues el Excel para mapear la columna de Email obligatoria.")
-                    else:
-                        if aplicar_exclusion and materia_archivo_limpia in LISTA_NEGRA_LIMPIA:
-                            st.warning(f"🚫 La materia '{materia_archivo.upper()}' está en la lista de exclusión de APIs.")
-                            df_final_wsp = pd.DataFrame(columns=['dni', 'nombre', 'materia'])
-                        else:
-                            df_temp_calif = pd.DataFrame()
-                            df_temp_calif['dni'] = df_canvas['id_match']
-                            df_temp_calif['nombre'] = df_canvas['Student'].apply(extraer_primer_nombre)
-                            df_temp_calif['materia'] = materia_archivo.strip().upper()
-                            df_final_wsp = df_temp_calif.drop_duplicates().copy()
-                        st.session_state.df_resultado = df_final_wsp
-                else:
-                    df_excel = pd.read_excel(archivo_xlsx)
-                    df_excel.columns = df_excel.columns.str.strip().str.lower()
-                    
-                    col_id_excel = 'dni' if 'dni' in df_excel.columns else ('id_alumno' if 'id_alumno' in df_excel.columns else df_excel.columns[0])
-                    df_excel['id_match'] = df_excel[col_id_excel].apply(forzar_id_string)
-                    df_excel['materia_match'] = df_excel['materia'].apply(limpiar_texto)
-                    
-                    df_universo = df_excel.copy()
-                    if aplicar_exclusion:
-                        df_universo = df_universo
