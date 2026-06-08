@@ -18,13 +18,13 @@ def limpiar_texto(texto):
     texto = str(texto).upper().strip()
     return texto.replace('Ñ', 'NI').replace('Á', 'A').replace('É', 'E').replace('Í', 'I').replace('Ó', 'O').replace('Ú', 'U')
 
-def limpiar_datos_hubspot(val):
-    """Limpia tildes y convierte la Ñ en N para compatibilidad estricta con HubSpot/Meta"""
+def limpiar_caracteres_especiales(val):
+    """Limpia tildes y convierte la Ñ en N para compatibilidad estricta con HubSpot y Meta (WhatsApp)"""
     if pd.isna(val): return ""
     s = str(val).strip()
-    # Reemplazo de Ñ/ñ por N/n
+    # Reemplazo estricto de Ñ/ñ por N/n para evitar rebotes en Meta
     s = s.replace('Ñ', 'N').replace('ñ', 'n')
-    # Remover tildes manteniendo el texto original (ya sea mayúscula o minúscula)
+    # Remover tildes manteniendo el caso (mayúscula/minúscula)
     remplazos = {
         'Á': 'A', 'É': 'E', 'Í': 'I', 'Ó': 'O', 'Ú': 'U',
         'á': 'a', 'é': 'e', 'í': 'i', 'ó': 'o', 'ú': 'u',
@@ -83,7 +83,6 @@ with col1:
 with col2:
     archivo_xlsx = st.file_uploader("2. Base de Alumnos (XLSX - Requerido para Submissions)", type=["xlsx"], key=f"xlsx_{st.session_state.count}")
 
-# Variable de control para saber si tenemos los archivos mínimos requeridos
 archivos_listos = False
 
 if archivo_csv:
@@ -99,7 +98,6 @@ if archivo_csv:
     
     es_submissions = 'canvas user id' in cols_lower and 'assignment name' in cols_lower
 
-    # VALIDACIÓN PEDIDO: Verificar si se cumplen las condiciones de carga antes de mostrar filtros
     if es_submissions and not archivo_xlsx:
         st.warning("⚠️ **Archivo intermedio requerido:** Detectamos un reporte de Submissions. Por favor, carga la Base de Alumnos (XLSX) para activar los filtros y poder procesar.")
     elif not es_submissions and opcion_base == "Base para HubSpot" and not archivo_xlsx:
@@ -107,7 +105,6 @@ if archivo_csv:
     else:
         archivos_listos = True
 
-    # SI PASA LAS VALIDACIONES, SE CARGAN LOS FILTROS Y PARÁMETROS
     if archivos_listos:
         st.markdown("### 🔍 Parámetros de Búsqueda")
         
@@ -157,7 +154,6 @@ if archivo_csv:
                             dict_mapeo_params[p] = ("columna", seleccion)
             st.markdown("---")
 
-        # Botón de ejecución directo
         if st.button("🔍 Calcular Deudores Reales", type="primary"):
             df_canvas = df_canvas_raw.copy()
             df_canvas.columns = cols_lower
@@ -244,83 +240,4 @@ if archivo_csv:
                         df_resultado_crudo = df_f.drop_duplicates(subset=['dni', 'materia'])
                 else:
                     df_excel = pd.read_excel(archivo_xlsx)
-                    df_excel.columns = df_excel.columns.str.strip().str.lower()
-                    
-                    col_id_e = 'dni' if 'dni' in df_excel.columns else ('id_alumno' if 'id_alumno' in df_excel.columns else df_excel.columns[0])
-                    df_excel['id_match'] = df_excel[col_id_e].apply(forzar_id_string)
-                    df_excel['materia_match'] = df_excel['materia'].apply(limpiar_texto)
-                    
-                    if excluir: df_excel = df_excel[~df_excel['materia_match'].isin(LISTA_NEGRA_LIMPIA)]
-                    
-                    df_cruce = pd.merge(df_canvas, df_excel, on='id_match', how='inner')
-                    
-                    if opcion_base == "Base para HubSpot":
-                        df_resultado_crudo = df_cruce[['email']].dropna().drop_duplicates()
-                    else:
-                        df_f = pd.DataFrame()
-                        df_f['dni'] = df_cruce['id_match']
-                        df_f['nombre'] = df_cruce['student'].apply(extraer_primer_nombre)
-                        df_f['materia'] = m_archivo.strip().upper()
-                        df_resultado_crudo = df_f.drop_duplicates(subset=['dni', 'materia'])
-
-                st.session_state.nombre_base = f"Base_{m_archivo.replace(' ', '_')}"
-
-            # --- CONSTRUCCIÓN Y LIMPIEZA AD-HOC SEGÚN DESTINO ---
-            if opcion_base == "Base para HubSpot":
-                # PEDIDO: Limpieza estricta de mails/valores para HubSpot (remueve tildes y cambia Ñ por N)
-                for col in df_resultado_crudo.columns:
-                    df_resultado_crudo[col] = df_resultado_crudo[col].apply(limpiar_datos_hubspot)
-                st.session_state.df_final_procesado = df_resultado_crudo.copy()
-            else:
-                # Flujo normal de WhatsApp
-                df_resultado_crudo['actividad'] = actividad_objetivo
-                if params_detectados:
-                    df_meta_build = pd.DataFrame()
-                    df_meta_build['dni'] = df_resultado_crudo['dni']
-                    
-                    for p in params_detectados:
-                        tipo, valor = dict_mapeo_params[p]
-                        if tipo == "fijo":
-                            df_meta_build[f"param_{p}"] = valor
-                        else:
-                            df_meta_build[f"param_{p}"] = df_resultado_crudo[valor].values
-                    st.session_state.df_final_procesado = df_meta_build.copy()
-                else:
-                    st.session_state.df_final_procesado = df_resultado_crudo[['dni', 'nombre', 'materia', 'actividad']].copy()
-            
-            st.session_state.opcion_base_guardada = opcion_base
-            st.rerun()
-
-    # --- ZONA DE RENDERIZADO DE RESULTADOS INDEPENDIENTE ---
-    if 'df_final_procesado' in st.session_state:
-        df_final = st.session_state.df_final_procesado.copy()
-        total_filas = len(df_final)
-        opcion_guardada = st.session_state.get('opcion_base_guardada', opcion_base)
-        
-        st.divider()
-        st.success(f"✅ ¡Estructura de datos lista! Se generaron {total_filas} registros.")
-        
-        st.write("### 📥 Descargar Archivos")
-        output = io.BytesIO()
-        if opcion_guardada == "Base para HubSpot":
-            with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
-                df_final.to_excel(writer, index=False, header=True)
-            st.download_button(label=f"📥 Descargar Base HubSpot ({total_filas} filas)", data=output.getvalue(), file_name=f"{st.session_state.nombre_base}-HUB.xlsx", type="primary")
-        else:
-            grid = st.columns(3)
-            for i in range(0, total_filas, 100):
-                chunk = df_final.iloc[i : i + 100]
-                parte = (i // 100) + 1
-                out_chunk = io.BytesIO()
-                with pd.ExcelWriter(out_chunk, engine='xlsxwriter') as writer:
-                    chunk.to_excel(writer, index=False, header=False)
-                with grid[(i//100) % 3]:
-                    st.download_button(label=f"📥 Parte {parte} ({len(chunk)} filas)", data=out_chunk.getvalue(), file_name=f"{st.session_state.nombre_base}-WSP_{parte}.xlsx")
-        
-        st.write("### 👁️ Vista previa de salida:")
-        st.dataframe(df_final)
-
-st.divider()
-if st.button("➕ Nueva Carga"):
-    reiniciar_aplicacion()
-    st.rerun()
+                    df_excel.columns = df_excel.columns.str
