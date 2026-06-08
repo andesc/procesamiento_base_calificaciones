@@ -118,4 +118,32 @@ if archivo_csv:
                 df_canvas['materia_match'] = df_canvas['course name'].apply(limpiar_texto)
                 df_canvas['actividad_limpia'] = df_canvas['assignment name'].apply(homologar_actividad)
 
-                if materias_seleccionadas
+                if materias_seleccionadas:
+                    df_canvas = df_canvas[df_canvas['course name'].isin(materias_seleccionadas)]
+                if "API" in actividad_objetivo.upper():
+                    df_canvas = df_canvas[~df_canvas['materia_match'].isin(LISTA_NEGRA_LIMPIA)]
+
+                entregas_validas = df_canvas[
+                    (df_canvas['actividad_limpia'] == actividad_objetivo) & 
+                    (df_canvas['workflow state'].isin(['submitted', 'graded']))
+                ].copy()
+                entregas_validas['llave_cruce'] = entregas_validas['id_match'] + "_" + entregas_validas['materia_match']
+                lista_cumplidores = entregas_validas['llave_cruce'].unique()
+
+                if archivo_xlsx:
+                    df_excel = pd.read_excel(archivo_xlsx)
+                    df_excel.columns = df_excel.columns.str.strip().str.lower()
+                    col_id = 'id_alumno' if 'id_alumno' in df_excel.columns else 'dni'
+                    df_excel['id_match'] = df_excel[col_id].apply(forzar_id_string)
+                    df_excel['materia_match'] = df_excel['materia'].apply(limpiar_texto)
+                    
+                    df_universo = df_excel.copy()
+                    if materias_seleccionadas:
+                        df_universo = df_universo[df_universo['materia'].isin(materias_seleccionadas)]
+                    if "API" in actividad_objetivo.upper():
+                        df_universo = df_universo[~df_universo['materia_match'].isin(LISTA_NEGRA_LIMPIA)]
+                    
+                    df_universo['llave_cruce'] = df_universo['id_match'] + "_" + df_universo['materia_match']
+                    df_deudores = df_universo[~df_universo['llave_cruce'].isin(lista_cumplidores)].copy()
+                    
+                    col
