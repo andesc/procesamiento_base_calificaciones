@@ -150,4 +150,127 @@ if archivo_csv:
             st.success("📂 **Reporte de Entregas (Submissions) detectado con éxito.**")
             
             materias_disponibles = []
-            if 'course name' in cols_canvas
+            if 'course name' in cols_canvas_lower:
+                idx_materia = cols_canvas_lower.index('course name')
+                nombre_real_columna = df_canvas.columns[idx_materia]
+                materias_disponibles = sorted(df_canvas[nombre_real_columna].dropna().unique())
+            
+            materias_seleccionadas = st.multiselect("1. Seleccionar Materias a evaluar (Vacío = Todas):", options=materias_disponibles)
+            actividad_objetivo = st.selectbox("2. Selecciona la actividad a reclamar:", ["API 1", "API 2", "API 3", "API 4", "AE 1", "AE 2", "AE 3", "AE 4"])
+            
+            if st.button("🔍 Calcular Deudores Reales", type="primary"):
+                if opcion_base == "Base para HubSpot" and not archivo_xlsx:
+                    st.error("⚠️ Para generar una base de **HubSpot**, necesitas cargar obligatoriamente el archivo Excel para mapear los correos electrónicos.")
+                else:
+                    df_canvas.columns = cols_canvas_lower
+                    df_canvas = df_canvas.dropna(subset=['sis user id'])
+                    df_canvas['id_match'] = df_canvas['sis user id'].apply(forzar_id_string)
+                    df_canvas['materia_match'] = df_canvas['course name'].apply(limpiar_texto)
+                    df_canvas['actividad_limpia'] = df_canvas['assignment name'].apply(homologar_actividad)
+
+                    if materias_seleccionadas:
+                        df_canvas = df_canvas[df_canvas['course name'].isin(materias_seleccionadas)]
+
+                    if "API" in actividad_objetivo.upper():
+                        df_canvas = df_canvas[~df_canvas['materia_match'].isin(LISTA_NEGRA_LIMPIA)]
+
+                    entregas_validas = df_canvas[
+                        (df_canvas['actividad_limpia'] == actividad_objetivo) & 
+                        (df_canvas['workflow state'].isin(['submitted', 'graded']))
+                    ].copy()
+                    entregas_validas['llave_cruce'] = entregas_validas['id_match'] + "_" + entregas_validas['materia_match']
+                    lista_cumplidores = entregas_validas['llave_cruce'].unique()
+
+                    if archivo_xlsx:
+                        df_excel = pd.read_excel(archivo_xlsx)
+                        df_excel.columns = df_excel.columns.str.strip().str.lower()
+                        
+                        col_id_excel = 'id_alumno' if 'id_alumno' in df_excel.columns else 'dni'
+                        df_excel['id_match'] = df_excel[col_id_excel].apply(forzar_id_string)
+                        df_excel['materia_match'] = df_excel['materia'].apply(limpiar_texto)
+                        
+                        df_universo = df_excel.copy()
+                        if materias_seleccionadas:
+                            df_universo = df_universo[df_universo['materia'].isin(materias_seleccionadas)]
+                        if "API" in actividad_objetivo.upper():
+                            df_universo = df_universo[~df_universo['materia_match'].isin(LISTA_NEGRA_LIMPIA)]
+                        
+                        df_universo['llave_cruce'] = df_universo['id_match'] + "_" + df_universo['materia_match']
+                        df_deudores = df_universo[~df_universo['llave_cruce'].isin(lista_cumplidores)].copy()
+                        
+                        col_nombre = 'nombres' if 'nombres' in df_deudores.columns else ('student' if 'student' in df_deudores.columns else df_deudores.columns[2])
+                        df_deudores['nombre_final'] = df_deudores[col_nombre].apply(extraer_primer_nombre)
+                        df_deudores['materia_final'] = df_deudores['materia'].astype(str).str.strip().str.upper()
+                        if 'dni' not in df_deudores.columns:
+                            df_deudores['dni'] = df_deudores['id_match']
+                        
+                        if opcion_base == "Base para HubSpot":
+                            st.session_state.df_resultado = df_deudores[['email']].dropna().drop_duplicates()
+                        else:
+                            st.session_state.df_resultado = df_deudores.rename(columns={'nombre_final': 'nombre', 'materia_final': 'materia'}).drop_duplicates(subset=['dni', 'materia']).copy()
+                    else:
+                        df_canvas['llave_cruce'] = df_canvas['id_match'] + "_" + df_canvas['materia_match']
+                        df_deudores = df_canvas[~df_canvas['llave_cruce'].isin(lista_cumplidores)].copy()
+                        
+                        df_final_temp = pd.DataFrame()
+                        df_final_temp['dni'] = df_deudores['id_match']
+                        col_user = 'user name' if 'user name' in df_deudores.columns else 'sis user id'
+                        df_final_temp['nombre'] = df_deudores[col_user].apply(extraer_primer_nombre)
+                        df_final_temp['materia'] = df_deudores['course name'].astype(str).str.strip().str.upper()
+                        
+                        st.session_state.df_resultado = df_final_temp.drop_duplicates(subset=['dni', 'materia']).copy()
+
+                    if opcion_base == "Base para Whatsapp" and not materias_seleccionadas:
+                        df_res_temp = st.session_state.df_resultado
+                        conteos = df_res_temp['dni'].value_counts()
+                        dnis_multiples = conteos[conteos >= 2].index
+                        df_res_temp.loc[df_res_temp['dni'].isin(dnis_multiples), 'materia'] = "DOS MATERIAS"
+                        st.session_state.df_resultado = df_res_temp.drop_duplicates(subset=['dni', 'materia'])
+
+                    st.session_state.nombre_base = f"Faltan_{actividad_objetivo.replace(' ', '_')}"
+                    st.session_state.procesado = True
+
+        # ==========================================
+        # --- CASO 2: REPORTE DE CALIFICACIONES ESTÁNDAR ---
+        # ==========================================
+        else:
+            st.success("📂 **Reporte de Calificaciones estándar detectado con éxito.**")
+            df_canvas = df_canvas[~df_canvas['Student'].str.contains('Points|Possible', case=False, na=False)]
+            
+            col_id_canvas = 'SIS Login ID' if 'SIS Login ID' in df_canvas.columns else ('SIS User ID' if 'SIS User ID' in df_canvas.columns else df_canvas.columns[1])
+            df_canvas['id_match'] = df_canvas[col_id_canvas].apply(forzar_id_string)
+            
+            try:
+                materia_archivo = archivo_csv.name.split("Calificaciones-")[1].split(".")[0].replace("_", " ")
+            except:
+                materia_archivo = "MATERIA_DETECTADA"
+                
+            materia_archivo_limpia = limpiar_texto(materia_archivo)
+            aplicar_exclusion = any(x in materia_archivo_limpia for x in ["API", "AP"])
+            
+            if st.button("🔍 Calcular Deudores Reales (Calificaciones)", type="primary"):
+                if not archivo_xlsx:
+                    if opcion_base == "Base para HubSpot":
+                        st.error("⚠️ Para generar una base estructurada para **HubSpot**, es necesario que cargues el Excel para mapear la columna de Email obligatoria.")
+                    else:
+                        if aplicar_exclusion and materia_archivo_limpia in LISTA_NEGRA_LIMPIA:
+                            st.warning(f"🚫 La materia '{materia_archivo.upper()}' está en la lista de exclusión de APIs.")
+                            df_final_wsp = pd.DataFrame(columns=['dni', 'nombre', 'materia'])
+                        else:
+                            df_temp_calif = pd.DataFrame()
+                            df_temp_calif['dni'] = df_canvas['id_match']
+                            df_temp_calif['nombre'] = df_canvas['Student'].apply(extraer_primer_nombre)
+                            df_temp_calif['materia'] = materia_archivo.strip().upper()
+                            df_final_wsp = df_temp_calif.drop_duplicates().copy()
+                        st.session_state.df_resultado = df_final_wsp
+                else:
+                    df_excel = pd.read_excel(archivo_xlsx)
+                    df_excel.columns = df_excel.columns.str.strip().str.lower()
+                    
+                    col_id_excel = 'dni' if 'dni' in df_excel.columns else ('id_alumno' if 'id_alumno' in df_excel.columns else df_excel.columns[0])
+                    df_excel['id_match'] = df_excel[col_id_excel].apply(forzar_id_string)
+                    df_excel['materia_match'] = df_excel['materia'].apply(limpiar_texto)
+                    
+                    df_universo = df_excel.copy()
+                    if aplicar_exclusion:
+                        df_universo = df_universo
