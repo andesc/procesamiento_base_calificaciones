@@ -226,7 +226,7 @@ if archivo_csv:
     if 'df_crudo' in st.session_state:
         df_final = st.session_state.df_crudo.copy()
         
-        # SI ES WHATSAPP Y TIENE COLUMNAS HOMOGÉNEAS, APLICA EL TEMPLATE SINO VA DIRECTO
+        # CRÍTICO: El template de Meta SOLO se ejecuta si se seleccionó la Base de WhatsApp
         if opcion_base == "Base para Whatsapp" and not df_final.empty:
             st.divider()
             st.markdown("### 📝 Configuración opcional: Template de Meta")
@@ -239,45 +239,4 @@ if archivo_csv:
             params = sorted(list(set(re.findall(r'\{\{(\d+)\}\}', texto_template))), key=int)
             if params:
                 st.info(f"💡 Variables dinámicas detectadas: {len(params)}")
-                cols_p = st.columns(min(len(params), 4))
-                df_meta_build = pd.DataFrame()
-                df_meta_build['dni'] = df_final['dni'] # ¡Asegurado! Siempre existirá 'dni'
-                
-                for idx, p in enumerate(params):
-                    with cols_p[idx % 4]:
-                        seleccion = st.selectbox(f"Variable {{{{ {p} }}}}:", options=["dni", "nombre", "materia", "✍️ Texto Fijo"], key=f"sel_{p}")
-                        if seleccion == "✍️ Texto Fijo":
-                            txt_fijo = st.text_input(f"Texto fijo para {{{{ {p} }}}}:", key=f"fijo_{p}")
-                            df_meta_build[f"param_{p}"] = txt_fijo
-                        else:
-                            df_meta_build[f"param_{p}"] = df_final[seleccion].values
-                df_final = df_meta_build.copy()
-
-        st.divider()
-        total_filas = len(df_final)
-        st.success(f"✅ ¡Estructura de datos lista! Se generaron {total_filas} registros.")
-        
-        st.write("### 📥 Descargar Archivos")
-        output = io.BytesIO()
-        if opcion_base == "Base para HubSpot":
-            with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
-                df_final.to_excel(writer, index=False, header=True)
-            st.download_button(label=f"📥 Descargar Base HubSpot ({total_filas} filas)", data=output.getvalue(), file_name=f"{st.session_state.nombre_base}-HUB.xlsx", type="primary")
-        else:
-            grid = st.columns(3)
-            for i in range(0, total_filas, 100):
-                chunk = df_final.iloc[i : i + 100]
-                parte = (i // 100) + 1
-                out_chunk = io.BytesIO()
-                with pd.ExcelWriter(out_chunk, engine='xlsxwriter') as writer:
-                    chunk.to_excel(writer, index=False, header=False)
-                with grid[(i//100) % 3]:
-                    st.download_button(label=f"📥 Parte {parte} ({len(chunk)} filas)", data=out_chunk.getvalue(), file_name=f"{st.session_state.nombre_base}-WSP_{parte}.xlsx")
-        
-        st.write("### 👁️ Vista previa de salida:")
-        st.dataframe(df_final)
-
-st.divider()
-if st.button("➕ Nueva Carga"):
-    reiniciar_aplicacion()
-    st.rerun()
+                cols_p = st.columns(min(len(params),
