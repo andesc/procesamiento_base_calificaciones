@@ -68,7 +68,6 @@ with col2:
     archivo_xlsx = st.file_uploader("2. Base de Alumnos (XLSX - Opcional para WhatsApp)", type=["xlsx"], key=f"xlsx_{st.session_state.count}")
 
 if archivo_csv:
-    # 1. LEER EL CSV INMEDIATAMENTE PARA PASARLO AL FORMULARIO
     @st.cache_data
     def cargar_csv_seguro(bytes_data):
         try:
@@ -85,7 +84,6 @@ if archivo_csv:
     
     es_submissions = 'sis user id' in cols_lower and 'assignment name' in cols_lower
 
-    # 2. SECCIÓN DE FILTROS DENTRO DE UN FORMULARIO PROTEGIDO
     st.markdown("### 🔍 Parámetros de Búsqueda")
     
     with st.form("formulario_calculo"):
@@ -104,7 +102,6 @@ if archivo_csv:
 
         botón_ejecutar = st.form_submit_button("🔍 Calcular Deudores Reales", type="primary")
 
-    # 3. PROCESAMIENTO AL HACER CLICK (SE GUARDA EN SESSION_STATE)
     if botón_ejecutar:
         if opcion_base == "Base para HubSpot" and not archivo_xlsx:
             st.error("⚠️ Para HubSpot es obligatorio cargar el archivo Excel para obtener los correos.")
@@ -112,6 +109,9 @@ if archivo_csv:
             df_canvas = df_canvas_raw.copy()
             df_canvas.columns = cols_lower
 
+            # ==========================================
+            # --- CASO 1: SUBMISSIONS ---
+            # ==========================================
             if es_submissions:
                 df_canvas = df_canvas.dropna(subset=['sis user id'])
                 df_canvas['id_match'] = df_canvas['sis user id'].apply(forzar_id_string)
@@ -176,8 +176,10 @@ if archivo_csv:
                 st.session_state.nombre_base = f"Faltan_{actividad_objetivo.replace(' ', '_')}"
                 st.session_state.tipo_reporte = "submissions"
 
+            # ==========================================
+            # --- CASO 2: CALIFICACIONES ---
+            # ==========================================
             else:
-                # REPORTE DE CALIFICACIONES ESTÁNDAR
                 df_canvas = df_canvas[~df_canvas['student'].str.contains('Points|Possible', case=False, na=False)]
                 col_id_c = 'sis login id' if 'sis login id' in df_canvas.columns else ('sis user id' if 'sis user id' in df_canvas.columns else df_canvas.columns[1])
                 df_canvas['id_match'] = df_canvas[col_id_c].apply(forzar_id_string)
@@ -197,7 +199,7 @@ if archivo_csv:
                         df_f['dni'] = df_canvas['id_match']
                         df_f['nombre'] = df_canvas['student'].apply(extraer_primer_nombre)
                         df_f['materia'] = m_archivo.strip().upper()
-                        st.session_state.df_crudo = df_f.drop_duplicates()
+                        st.session_state.df_crudo = df_f.drop_duplicates(subset=['dni', 'materia'])
                 else:
                     df_excel = pd.read_excel(archivo_xlsx)
                     df_excel.columns = df_excel.columns.str.strip().str.lower()
@@ -220,11 +222,11 @@ if archivo_csv:
                 st.session_state.nombre_base = f"Base_{m_archivo.replace(' ', '_')}"
                 st.session_state.tipo_reporte = "calificaciones"
 
-    # 4. RENDERIZACIÓN BLINDADA (FUERA DE LOS COMPONENTES VOLÁTILES)
+    # 4. RENDERIZACIÓN DE SALIDA SEGURA
     if 'df_crudo' in st.session_state:
         df_final = st.session_state.df_crudo.copy()
         
-        # SI ES WHATSAPP, EL CUADRO DE TEXTO QUEDA ACÁ ABAJO TOTALMENTE INMUNE A RERUNS
+        # SI ES WHATSAPP Y TIENE COLUMNAS HOMOGÉNEAS, APLICA EL TEMPLATE SINO VA DIRECTO
         if opcion_base == "Base para Whatsapp" and not df_final.empty:
             st.divider()
             st.markdown("### 📝 Configuración opcional: Template de Meta")
@@ -239,7 +241,7 @@ if archivo_csv:
                 st.info(f"💡 Variables dinámicas detectadas: {len(params)}")
                 cols_p = st.columns(min(len(params), 4))
                 df_meta_build = pd.DataFrame()
-                df_meta_build['dni'] = df_final['dni']
+                df_meta_build['dni'] = df_final['dni'] # ¡Asegurado! Siempre existirá 'dni'
                 
                 for idx, p in enumerate(params):
                     with cols_p[idx % 4]:
