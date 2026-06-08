@@ -135,7 +135,6 @@ if opcion_base == "Base para Whatsapp" and archivo_csv:
         placeholder="Hola {{1}}, recordá entregar la actividad de {{2}} para evitar quedar libre."
     )
     
-    # Extraer parámetros numéricos del estilo {{1}}, {{2}}
     params = sorted(list(set(re.findall(r'\{\{(\d+)\}\}', texto_template))), key=int)
     
     if params:
@@ -227,15 +226,13 @@ if archivo_csv:
                     if opcion_base == "Base para HubSpot":
                         st.session_state.df_resultado = df_deudores[['email']].dropna().drop_duplicates()
                     else:
-                        # LOGICA DE AGRUPACIÓN POR MULTIPLES MATERIAS (Solo si no hay filtro explícito)
                         if not materias_seleccionadas:
                             conteos = df_deudores['dni'].value_counts()
                             dnis_multiples = conteos[conteos >= 2].index
                             df_deudores.loc[df_deudores['dni'].isin(dnis_multiples), 'materia_final'] = "DOS MATERIAS"
                         
-                        df_final_wsp = df_deudores.rename(columns={'nombre_final': 'nombre', 'materia_final': 'materia'}).drop_duplicates(subset=['dni', 'materia'])
+                        df_final_wsp = df_deudores.rename(columns={'nombre_final': 'nombre', 'materia_final': 'materia'}).drop_duplicates(subset=['dni', 'materia']).copy()
                         
-                        # Armar estructura según variables de Meta (si existen)
                         if config_template:
                             columnas_salida = ['dni']
                             for p in sorted(config_template.keys(), key=int):
@@ -243,7 +240,7 @@ if archivo_csv:
                                 if config_template[p]["tipo"] == "✍️ Texto Fijo":
                                     df_final_wsp[col_p] = config_template[p]["manual"]
                                 else:
-                                    df_final_wsp[col_p] = df_final_wsp[config_template[p]["tipo"]]
+                                    df_final_wsp[col_p] = df_final_wsp[config_template[p]["tipo"]].values
                                 columnas_salida.append(col_p)
                             st.session_state.df_resultado = df_final_wsp[columnas_salida]
                         else:
@@ -281,22 +278,21 @@ if archivo_csv:
                 if not archivo_xlsx:
                     if aplicar_exclusion and materia_archivo_limpia in LISTA_NEGRA_LIMPIA:
                         st.warning(f"🚫 La materia '{materia_archivo.upper()}' está en la lista de exclusión de APIs.")
-                        df_final = pd.DataFrame(columns=['dni', 'nombre', 'materia'])
+                        df_final_wsp = pd.DataFrame(columns=['dni', 'nombre', 'materia'])
                     else:
                         df_canvas['dni'] = df_canvas['id_match']
                         df_canvas['nombre'] = df_canvas['Student'].apply(extraer_primer_nombre)
                         df_canvas['materia'] = materia_archivo.strip().upper()
-                        df_final = df_canvas[['dni', 'nombre', 'materia']].copy()
+                        df_final_wsp = df_canvas[['dni', 'nombre', 'materia']].drop_duplicates().copy()
                     
-                    df_final_wsp = df_final.drop_duplicates()
-                    if opcion_base == "Base para Whatsapp" and config_template:
+                    if opcion_base == "Base para Whatsapp" and config_template and not df_final_wsp.empty:
                         columnas_salida = ['dni']
                         for p in sorted(config_template.keys(), key=int):
                             col_p = f"param_{p}"
                             if config_template[p]["tipo"] == "✍️ Texto Fijo":
                                 df_final_wsp[col_p] = config_template[p]["manual"]
                             else:
-                                df_final_wsp[col_p] = df_final_wsp[config_template[p]["tipo"]]
+                                df_final_wsp[col_p] = df_final_wsp[config_template[p]["tipo"]].values
                             columnas_salida.append(col_p)
                         st.session_state.df_resultado = df_final_wsp[columnas_salida]
                     else:
@@ -321,7 +317,7 @@ if archivo_csv:
                     if opcion_base == "Base para HubSpot":
                         st.session_state.df_resultado = df_cruce[['email']].dropna().drop_duplicates()
                     else:
-                        df_final_wsp = df_cruce.rename(columns={'dni_final': 'dni', 'nombre_final': 'nombre', 'materia_final': 'materia'}).drop_duplicates(subset=['dni', 'materia'])
+                        df_final_wsp = df_cruce.rename(columns={'dni_final': 'dni', 'nombre_final': 'nombre', 'materia_final': 'materia'}).drop_duplicates(subset=['dni', 'materia']).copy()
                         
                         if config_template:
                             columnas_salida = ['dni']
@@ -330,7 +326,7 @@ if archivo_csv:
                                 if config_template[p]["tipo"] == "✍️ Texto Fijo":
                                     df_final_wsp[col_p] = config_template[p]["manual"]
                                 else:
-                                    df_final_wsp[col_p] = df_final_wsp[config_template[p]["tipo"]]
+                                    df_final_wsp[col_p] = df_final_wsp[config_template[p]["tipo"]].values
                                 columnas_salida.append(col_p)
                             st.session_state.df_resultado = df_final_wsp[columnas_salida]
                         else:
