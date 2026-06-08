@@ -110,48 +110,19 @@ with st.expander("📌 Instrucciones de uso - LEER AQUÍ"):
         **Para generar la Base de HubSpot (Solo columna Email):**
         1. **Reporte de Canvas (CSV):** Subí el archivo de Canvas.
         2. **Base de Alumnos (XLSX):** Subí el Excel de invitaciones. Es obligatorio para extraer el correo.
-        3. El archivo resultante contendrá **únicamente la columna `email`** con encabezado.
         """)
     else:
         st.markdown("""
         **Para generar la Base de WhatsApp (Segmentada de a 100):**
         1. **Reporte de Canvas (CSV):** Subí tu archivo de Canvas.
-        2. **Base de Alumnos (XLSX - Opcional para Calificaciones):** Permite cruzar datos más completos.
-        3. El archivo resultante organizará las columnas como **`dni`, `nombre`, `materia`** siempre sin encabezados.
+        2. **Base de Alumnos (XLSX - Opcional):** Permite cruzar correos o nombres si es necesario.
         """)
 
 col1, col2 = st.columns(2)
 with col1:
     archivo_csv = st.file_uploader("1. Reporte de Canvas (CSV)", type=["csv"], key=f"csv_{st.session_state.count}")
 with col2:
-    archivo_xlsx = st.file_uploader("2. Base de Alumnos (XLSX - Opcional para Calificaciones en WhatsApp)", type=["xlsx"], key=f"xlsx_{st.session_state.count}")
-
-# --- ENTRADA DE TEMPLATE DE META (SOLO PARA WHATSAPP) ---
-config_template = {}
-if opcion_base == "Base para Whatsapp" and archivo_csv:
-    st.markdown("### 📝 Configuración de Template de Meta")
-    texto_template = st.text_area(
-        "Pegá acá el contenido de tu plantilla de Meta:",
-        placeholder="Hola {{1}}, recordá entregar la actividad de {{2}} para evitar quedar libre."
-    )
-    
-    params = sorted(list(set(re.findall(r'\{\{(\d+)\}\}', texto_template))), key=int)
-    
-    if params:
-        st.info(f"💡 Se detectaron {len(params)} variables dinámicas. Definí el mapeo de columnas para el archivo resultante:")
-        cols_p = st.columns(min(len(params), 4))
-        for idx, p in enumerate(params):
-            with cols_p[idx % 4]:
-                seleccion = st.selectbox(
-                    f"Variable {{{{ {p} }}}}:",
-                    options=["dni", "nombre", "materia", "✍️ Texto Fijo"],
-                    key=f"param_meta_{p}"
-                )
-                val_manual = ""
-                if seleccion == "✍️ Texto Fijo":
-                    val_manual = st.text_input(f"Ingresá el texto fijo para {{{{ {p} }}}}:", key=f"manual_meta_{p}")
-                config_template[p] = {"tipo": seleccion, "manual": val_manual}
-        st.divider()
+    archivo_xlsx = st.file_uploader("2. Base de Alumnos (XLSX - Opcional para WhatsApp)", type=["xlsx"], key=f"xlsx_{st.session_state.count}")
 
 if archivo_csv:
     df_canvas = None
@@ -178,8 +149,5 @@ if archivo_csv:
         if es_submissions:
             st.success("📂 **Reporte de Entregas (Submissions) detectado con éxito.**")
             
-            # ¡CORRECCIÓN CLAVE! EXTRACCIÓN DIRECTA DESDE EL CSV DE CANVAS
             materias_disponibles = []
-            if 'course name' in cols_canvas_lower:
-                idx_materia = cols_canvas_lower.index('course name')
-                nombre_real_columna = df_canvas.columns[idx_materia]
+            if 'course name' in cols_canvas
