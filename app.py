@@ -178,17 +178,21 @@ if archivo_csv:
         if es_submissions:
             st.success("📂 **Reporte de Entregas (Submissions) detectado con éxito.**")
             
+            # EXTRACCIÓN DINÁMICA DE MATERIAS SEGURO
             materias_disponibles = []
             if archivo_xlsx:
                 try:
+                    # Copia del puntero para no agotar el buffer de streamlit
                     df_excel_temp = pd.read_excel(archivo_xlsx)
-                    if 'materia' in [c.lower().strip() for c in df_excel_temp.columns]:
-                        df_excel_temp.columns = df_excel_temp.columns.str.strip().str.lower()
+                    # Forzar nombres de columnas limpios para encontrar la columna materia
+                    df_excel_temp.columns = df_excel_temp.columns.str.strip().str.lower()
+                    if 'materia' in df_excel_temp.columns:
                         materias_disponibles = sorted(df_excel_temp['materia'].dropna().unique())
-                except:
-                    pass
+                except Exception as e:
+                    st.warning(f"Aviso: No se pudieron precargar las materias del Excel aún: {e}")
             
-            materias_seleccionadas = st.multiselect("1. Seleccionar Materias a evaluar (Vacío = Todas):", materias_disponibles)
+            # Filtros expuestos
+            materias_seleccionadas = st.multiselect("1. Seleccionar Materias a evaluar (Vacío = Todas):", options=materias_disponibles)
             actividad_objetivo = st.selectbox("2. Selecciona la actividad a reclamar:", ["API 1", "API 2", "API 3", "API 4", "AE 1", "AE 2", "AE 3", "AE 4"])
             
             if st.button("🔍 Calcular Deudores Reales", type="primary"):
@@ -288,7 +292,6 @@ if archivo_csv:
                             st.warning(f"🚫 La materia '{materia_archivo.upper()}' está en la lista de exclusión de APIs.")
                             df_final_wsp = pd.DataFrame(columns=['dni', 'nombre', 'materia'])
                         else:
-                            # CORRECCIÓN DE SEGURIDAD ESTRUCTURAL EN ASIGNACIONES:
                             df_temp_calif = pd.DataFrame()
                             df_temp_calif['dni'] = df_canvas['id_match']
                             df_temp_calif['nombre'] = df_canvas['Student'].apply(extraer_primer_nombre)
