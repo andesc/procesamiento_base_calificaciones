@@ -277,7 +277,7 @@ if archivo_csv:
                 st.session_state.df_final_procesado = df_resultado_crudo.copy()
             
             st.session_state.opcion_base_guardada = opcion_base
-            st.rerun() # Fuerza a Streamlit a redibujar los datos guardados inmediatamente
+            st.rerun()
 
     # --- ZONA DE RENDERIZADO DE RESULTADOS INDEPENDIENTE ---
     if 'df_final_procesado' in st.session_state:
@@ -293,4 +293,23 @@ if archivo_csv:
         if opcion_guardada == "Base para HubSpot":
             with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
                 df_final.to_excel(writer, index=False, header=True)
-            st.download_button(label=f"📥 Descargar Base HubSpot ({total_filas} filas)", data=output.getvalue(), file_name=f"{st.session_state.nombre_})
+            # LÍNEA CORREGIDA AQUÍ:
+            st.download_button(label=f"📥 Descargar Base HubSpot ({total_filas} filas)", data=output.getvalue(), file_name=f"{st.session_state.nombre_base}-HUB.xlsx", type="primary")
+        else:
+            grid = st.columns(3)
+            for i in range(0, total_filas, 100):
+                chunk = df_final.iloc[i : i + 100]
+                parte = (i // 100) + 1
+                out_chunk = io.BytesIO()
+                with pd.ExcelWriter(out_chunk, engine='xlsxwriter') as writer:
+                    chunk.to_excel(writer, index=False, header=False)
+                with grid[(i//100) % 3]:
+                    st.download_button(label=f"📥 Parte {parte} ({len(chunk)} filas)", data=out_chunk.getvalue(), file_name=f"{st.session_state.nombre_base}-WSP_{parte}.xlsx")
+        
+        st.write("### 👁️ Vista previa de salida:")
+        st.dataframe(df_final)
+
+st.divider()
+if st.button("➕ Nueva Carga"):
+    reiniciar_aplicacion()
+    st.rerun()
