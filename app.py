@@ -65,7 +65,7 @@ col1, col2 = st.columns(2)
 with col1:
     archivo_csv = st.file_uploader("1. Reporte de Canvas (CSV)", type=["csv"], key=f"csv_{st.session_state.count}")
 with col2:
-    archivo_xlsx = st.file_uploader("2. Base de Alumnos (XLSX - Opcional para WhatsApp)", type=["xlsx"], key=f"xlsx_{st.session_state.count}")
+    archivo_xlsx = st.file_uploader("2. Base de Alumnos (XLSX - Requerido para Submissions)", type=["xlsx"], key=f"xlsx_{st.session_state.count}")
 
 if archivo_csv:
     contenido_bytes = archivo_csv.getvalue()
@@ -78,13 +78,13 @@ if archivo_csv:
     df_canvas_raw.columns = df_canvas_raw.columns.str.strip()
     cols_lower = [c.lower() for c in df_canvas_raw.columns]
     
-    es_submissions = 'sis user id' in cols_lower and 'assignment name' in cols_lower
+    # Identificación inequívoca del tipo de reporte
+    es_submissions = 'canvas user id' in cols_lower and 'assignment name' in cols_lower
 
     st.markdown("### 🔍 Parámetros de Búsqueda")
     
-    # --- CONFIGURACIÓN DE FILTROS BÁSICOS ---
     if es_submissions:
-        st.info("📂 **Reporte de Entregas (Submissions) detectado.**")
+        st.info("📂 **Reporte de Entregas (Submissions) detectado.** _Nota: Requiere cruzarse con Excel obligatoriamente._")
         idx_m = cols_lower.index('course name') if 'course name' in cols_lower else 0
         materias_disponibles = sorted(df_canvas_raw[df_canvas_raw.columns[idx_m]].dropna().unique())
         
@@ -131,23 +131,21 @@ if archivo_csv:
 
     # Botón de ejecución directo
     if st.button("🔍 Calcular Deudores Reales", type="primary"):
-        if opcion_base == "Base para HubSpot" and not archivo_xlsx:
-            st.error("⚠️ Para HubSpot es obligatorio cargar el archivo Excel para obtener los correos.")
+        # Validaciones de seguridad de archivos según la nueva lógica analizada
+        if es_submissions and not archivo_xlsx:
+            st.error("⚠️ El reporte de Submissions no contiene los DNI nativos. Es obligatorio cargar el archivo Excel para procesar esta base.")
+        elif not es_submissions and opcion_base == "Base para HubSpot" and not archivo_xlsx:
+            st.error("⚠️ Para procesar bases de HubSpot desde Calificaciones es obligatorio cargar el archivo Excel para obtener los correos.")
         else:
             df_canvas = df_canvas_raw.copy()
             df_canvas.columns = cols_lower
 
             # ==========================================
-            # --- CASO 1: SUBMISSIONS ---
+            # --- CASO 1: SUBMISSIONS (SÓLO CRUCE EXCEL) ---
             # ==========================================
             if es_submissions:
-                df_canvas = df_canvas.dropna(subset=['sis user id'])
-                
-                if opcion_base == "Base para Whatsapp" and 'canvas user id' in cols_lower:
-                    df_canvas['id_match'] = df_canvas['canvas user id'].apply(forzar_id_string)
-                else:
-                    df_canvas['id_match'] = df_canvas['sis user id'].apply(forzar_id_string)
-
+                df_canvas = df_canvas.dropna(subset=['canvas user id'])
+                df_canvas['id_match'] = df_canvas['canvas user id'].apply(forzar_id_string)
                 df_canvas['materia_match'] = df_canvas['course name'].apply(limpiar_texto)
                 df_canvas['actividad_limpia'] = df_canvas['assignment name'].apply(homologar_actividad)
 
@@ -156,6 +154,7 @@ if archivo_csv:
                 if "API" in actividad_objetivo.upper():
                     df_canvas = df_canvas[~df_canvas['materia_match'].isin(LISTA_NEGRA_LIMPIA)]
 
+                # Identificar quiénes SÍ entregaron de forma correcta
                 entregas_validas = df_canvas[
                     (df_canvas['actividad_limpia'] == actividad_objetivo) & 
                     (df_canvas['workflow state'].isin(['submitted', 'graded']))
@@ -163,48 +162,43 @@ if archivo_csv:
                 entregas_validas['llave_cruce'] = entregas_validas['id_match'] + "_" + entregas_validas['materia_match']
                 lista_cumplidores = entregas_validas['llave_cruce'].unique()
 
-                if archivo_xlsx:
-                    df_excel = pd.read_excel(archivo_xlsx)
-                    df_excel.columns = df_excel.columns.str.strip().str.lower()
-                    col_id = 'id_alumno' if 'id_alumno' in df_excel.columns else 'dni'
-                    df_excel['id_match'] = df_excel[col_id].apply(forzar_id_string)
-                    df_excel['materia_match'] = df_excel['materia'].apply(limpiar_texto)
-                    
-                    df_universo = df_excel.copy()
-                    if materias_seleccionadas:
-                        df_universo = df_universo[df_universo['materia'].isin(materias_seleccionadas)]
-                    if "API" in actividad_objetivo.upper():
-                        df_universo = df_universo[~df_universo['materia_match'].isin(LISTA_NEGRA_LIMPIA)]
-                    
-                    df_universo['llave_cruce'] = df_universo['id_match'] + "_" + df_universo['materia_match']
-                    df_deudores = df_universo[~df_universo['llave_cruce'].isin(lista_cumplidores)].copy()
-                    
-                    col_n = 'nombres' if 'nombres' in df_deudores.columns else ('student' if 'student' in df_deudores.columns else df_deudores.columns[2])
-                    df_deudores['nombre'] = df_deudores[col_n].apply(extraer_primer_nombre)
-                    df_deudores['materia'] = df_deudores['materia'].astype(str).str.strip().str.upper()
-                    df_deudores['dni'] = df_deudores['id_match']
-                    
-                    if opcion_base == "Base para HubSpot":
-                        df_resultado_crudo = df_deudores[['email']].dropna().drop_duplicates()
-                    else:
-                        df_resultado_crudo = df_deudores[['dni', 'nombre', 'materia']].drop_duplicates(subset=['dni', 'materia'])
-                else:
-                    df_canvas['llave_cruce'] = df_canvas['id_match'] + "_" + df_canvas['materia_match']
-                    df_deudores = df_canvas[~df_canvas['llave_cruce'].isin(lista_cumplidores)].copy()
-                    
-                    df_f = pd.DataFrame()
-                    df_f['dni'] = df_deudores['id_match']
-                    col_u = 'user name' if 'user name' in df_deudores.columns else 'sis user id'
-                    df_f['nombre'] = df_deudores[col_u].apply(extraer_primer_nombre)
-                    df_f['materia'] = df_deudores['course name'].astype(str).str.strip().str.upper()
-                    
-                    df_resultado_crudo = df_f.drop_duplicates(subset=['dni', 'materia'])
-
-                if opcion_base == "Base para Whatsapp" and not materias_seleccionadas:
-                    mults = df_resultado_crudo['dni'].value_counts()
-                    df_resultado_crudo.loc[df_resultado_crudo['dni'].isin(mults[mults >= 2].index), 'materia'] = "DOS MATERIAS"
-                    df_resultado_crudo = df_resultado_crudo.drop_duplicates(subset=['dni', 'materia'])
+                # Lectura y procesamiento obligatorio del Excel
+                df_excel = pd.read_excel(archivo_xlsx)
+                df_excel.columns = df_excel.columns.str.strip().str.lower()
                 
+                # Identificación de columnas clave en el Excel
+                col_canvas_excel = 'canvas_id' if 'canvas_id' in df_excel.columns else ('canvas id' if 'canvas id' in df_excel.columns else 'id_alumno')
+                col_dni_excel = 'dni' if 'dni' in df_excel.columns else 'documento'
+                
+                df_excel['id_match'] = df_excel[col_canvas_excel].apply(forzar_id_string)
+                df_excel['materia_match'] = df_excel['materia'].apply(limpiar_texto)
+                
+                df_universo = df_excel.copy()
+                if materias_seleccionadas:
+                    df_universo = df_universo[df_universo['materia'].isin(materias_seleccionadas)]
+                if "API" in actividad_objetivo.upper():
+                    df_universo = df_universo[~df_universo['materia_match'].isin(LISTA_NEGRA_LIMPIA)]
+                
+                df_universo['llave_cruce'] = df_universo['id_match'] + "_" + df_universo['materia_match']
+                
+                # Filtrar del universo a los deudores reales (no están en la lista de cumplidores)
+                df_deudores = df_universo[~df_universo['llave_cruce'].isin(lista_cumplidores)].copy()
+                
+                col_n = 'nombres' if 'nombres' in df_deudores.columns else ('student' if 'student' in df_deudores.columns else df_deudores.columns[2])
+                df_deudores['nombre'] = df_deudores[col_n].apply(extraer_primer_nombre)
+                df_deudores['materia'] = df_deudores['materia'].astype(str).str.strip().str.upper()
+                df_deudores['dni'] = df_deudores[col_dni_excel].apply(forzar_id_string) # DNI real obtenido desde el Excel
+                
+                if opcion_base == "Base para HubSpot":
+                    df_resultado_crudo = df_deudores[['email']].dropna().drop_duplicates()
+                else:
+                    df_resultado_crudo = df_deudores[['dni', 'nombre', 'materia']].drop_duplicates(subset=['dni', 'materia'])
+                    # Agrupar por dos materias si no hay filtros específicos
+                    if not materias_seleccionadas:
+                        mults = df_resultado_crudo['dni'].value_counts()
+                        df_resultado_crudo.loc[df_resultado_crudo['dni'].isin(mults[mults >= 2].index), 'materia'] = "DOS MATERIAS"
+                        df_resultado_crudo = df_resultado_crudo.drop_duplicates(subset=['dni', 'materia'])
+
                 st.session_state.nombre_base = f"Faltan_{actividad_objetivo.replace(' ', '_')}"
 
             # ==========================================
@@ -213,11 +207,9 @@ if archivo_csv:
             else:
                 df_canvas = df_canvas[~df_canvas['student'].str.contains('Points|Possible', case=False, na=False)]
                 
-                if opcion_base == "Base para Whatsapp" and 'canvas user id' in cols_lower:
-                    df_canvas['id_match'] = df_canvas['canvas user id'].apply(forzar_id_string)
-                else:
-                    col_id_c = 'sis login id' if 'sis login id' in df_canvas.columns else ('sis user id' if 'sis user id' in df_canvas.columns else df_canvas.columns[1])
-                    df_canvas['id_match'] = df_canvas[col_id_c].apply(forzar_id_string)
+                # 'sis login id' almacena nativamente el DNI directo en Calificaciones
+                col_dni_canvas = 'sis login id' if 'sis login id' in cols_lower else ('sis user id' if 'sis user id' in cols_lower else df_canvas.columns[1])
+                df_canvas['id_match'] = df_canvas[col_dni_canvas].apply(forzar_id_string)
                 
                 try: m_archivo = archivo_csv.name.split("Calificaciones-")[1].split(".")[0].replace("_", " ")
                 except: m_archivo = "MATERIA_DETECTADA"
@@ -226,6 +218,7 @@ if archivo_csv:
                 excluir = any(x in m_limpia for x in ["API", "AP"])
 
                 if not archivo_xlsx:
+                    # WhatsApp Directo desde el CSV de Calificaciones usando el ID nativo como DNI
                     if excluir and m_limpia in LISTA_NEGRA_LIMPIA:
                         st.warning(f"🚫 Materia '{m_archivo.upper()}' excluida.")
                         df_resultado_crudo = pd.DataFrame(columns=['dni', 'nombre', 'materia'])
@@ -236,13 +229,17 @@ if archivo_csv:
                         df_f['materia'] = m_archivo.strip().upper()
                         df_resultado_crudo = df_f.drop_duplicates(subset=['dni', 'materia'])
                 else:
+                    # Con Excel (Para HubSpot o si decidís cargarlo igual)
                     df_excel = pd.read_excel(archivo_xlsx)
                     df_excel.columns = df_excel.columns.str.strip().str.lower()
+                    
                     col_id_e = 'dni' if 'dni' in df_excel.columns else ('id_alumno' if 'id_alumno' in df_excel.columns else df_excel.columns[0])
                     df_excel['id_match'] = df_excel[col_id_e].apply(forzar_id_string)
                     df_excel['materia_match'] = df_excel['materia'].apply(limpiar_texto)
                     
                     if excluir: df_excel = df_excel[~df_excel['materia_match'].isin(LISTA_NEGRA_LIMPIA)]
+                    
+                    # En calificaciones el cruce vuelve a ser por el identificador DNI directo
                     df_cruce = pd.merge(df_canvas, df_excel, on='id_match', how='inner')
                     
                     if opcion_base == "Base para HubSpot":
@@ -256,7 +253,7 @@ if archivo_csv:
 
                 st.session_state.nombre_base = f"Base_{m_archivo.replace(' ', '_')}"
 
-            # --- ESTRUCTURACIÓN DEL RESULTADO EN SESIÓN ---
+            # --- CONSTRUCCIÓN DE LA SALIDA SEGÚN TEMPLATE ---
             if opcion_base == "Base para Whatsapp" and not df_resultado_crudo.empty:
                 df_resultado_crudo['actividad'] = actividad_objetivo
                 
@@ -286,14 +283,13 @@ if archivo_csv:
         opcion_guardada = st.session_state.get('opcion_base_guardada', opcion_base)
         
         st.divider()
-        st.success(f"✅ ¡Estructura de datos lista! Se generaron {total_filas} registros.")
+        st.success(f"✅ ¡Estructura de datos lista! Se generaron {total_filas} registros en base a las nuevas reglas de negocio.")
         
         st.write("### 📥 Descargar Archivos")
         output = io.BytesIO()
         if opcion_guardada == "Base para HubSpot":
             with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
                 df_final.to_excel(writer, index=False, header=True)
-            # LÍNEA CORREGIDA AQUÍ:
             st.download_button(label=f"📥 Descargar Base HubSpot ({total_filas} filas)", data=output.getvalue(), file_name=f"{st.session_state.nombre_base}-HUB.xlsx", type="primary")
         else:
             grid = st.columns(3)
