@@ -2,6 +2,7 @@ import streamlit as st
 import pandas as pd
 import io
 import re
+import zipfile
 
 # --- CONFIGURACIÓN DE LA PÁGINA ---
 st.set_page_config(page_title="Generador de bases", page_icon="🛠️")
@@ -42,6 +43,12 @@ def forzar_id_string(valor):
     try: return str(int(float(str(valor).strip())))
     except: return str(valor).strip()
 
+def forzar_score_float(valor):
+    """Convierte la nota a número flotante de forma segura para validar aprobados"""
+    if pd.isna(valor): return 0.0
+    try: return float(str(valor).strip())
+    except: return 0.0
+
 def homologar_actividad(nombre_tarea):
     if pd.isna(nombre_tarea): return "OTRO"
     n = str(nombre_tarea).upper().strip()
@@ -77,7 +84,6 @@ archivos_listos = False
 df_excel_prelectura = None
 periodos_disponibles = []
 
-# Validación previa y lectura para capturar períodos
 if archivo_csv:
     contenido_bytes = archivo_csv.getvalue()
     try:
@@ -91,19 +97,16 @@ if archivo_csv:
     
     es_submissions = 'canvas user id' in cols_lower and 'assignment name' in cols_lower
 
-    # Requerir obligatoriamente el Excel si es Submissions o si queremos extraer los períodos de carrera
     if archivo_xlsx:
         try:
             df_excel_prelectura = pd.read_excel(archivo_xlsx)
             df_excel_prelectura.columns = df_excel_prelectura.columns.str.strip()
-            # Buscar la columna ignorando mayúsculas/minúsculas
             col_periodo = [c for c in df_excel_prelectura.columns if c.lower() == 'periodo inicio carrera']
             if col_periodo:
                 periodos_disponibles = sorted(df_excel_prelectura[col_periodo[0]].dropna().astype(str).unique())
         except Exception as e:
             st.error(f"Error al pre-leer el archivo Excel: {e}")
 
-    # Validaciones de interfaz
     if es_submissions and not archivo_xlsx:
         st.warning("⚠️ **Archivo intermedio requerido:** Detectamos un reporte de Submissions. Por favor, carga la Base de Alumnos (XLSX) para activar los filtros y poder procesar.")
     elif not es_submissions and not archivo_xlsx:
@@ -111,7 +114,6 @@ if archivo_csv:
     else:
         archivos_listos = True
 
-    # --- SI LOS ARCHIVOS ESTÁN LISTOS, SE DESPLEGAN LOS FILTROS PREVIOS Y EL TIPO DE BASE ---
     if archivos_listos:
         st.divider()
         st.markdown("### 🎯 Filtros Previos de Cohorte (NI / RI)")
@@ -119,7 +121,6 @@ if archivo_csv:
         col_f1, col_f2 = st.columns(2)
         with col_f1:
             if periodos_disponibles:
-                # Se preselecciona el último período indexado (usualmente el más nuevo)
                 periodo_actual_sel = st.selectbox("1. Selecciona el Período / Bimestre Actual:", options=periodos_disponibles, index=len(periodos_disponibles)-1)
             else:
                 st.warning("⚠️ No se encontró la columna 'Periodo inicio Carrera' en el Excel.")
@@ -190,12 +191,10 @@ if archivo_csv:
             df_canvas = df_canvas_raw.copy()
             df_canvas.columns = cols_lower
 
-            # Carga y estandarización del Excel base
             df_excel = pd.read_excel(archivo_xlsx)
             df_excel.columns = df_excel.columns.str.strip()
             
-            # --- NUEVA FUNCIONALIDAD: FILTRADO PREVIO NI / RI ---
-            if periodo_actual_sel and idx_m != None:
+            if periodo_actual_sel:
                 col_p_carrera = [c for c in df_excel.columns if c.lower() == 'periodo inicio carrera'][0]
                 df_excel[col_p_carrera] = df_excel[col_p_carrera].astype(str).str.strip()
                 
@@ -204,7 +203,6 @@ if archivo_csv:
                 elif filtro_ingreso == "Solo Reingresantes (RI)":
                     df_excel = df_excel[df_excel[col_p_carrera] != str(periodo_actual_sel).strip()]
 
-            # Estandarizamos minúsculas para el proceso interno
             df_excel.columns = df_excel.columns.str.lower()
 
             # ==========================================
@@ -221,10 +219,24 @@ if archivo_csv:
                 if "API" in actividad_objetivo.upper():
                     df_canvas = df_canvas[~df_canvas['materia_match'].isin(LISTA_NEGRA_LIMPIA)]
 
-                entregas_validas = df_canvas[
-                    (df_canvas['actividad_limpia'] == actividad_objetivo) & 
-                    (df_canvas['workflow state'].isin(['submitted', 'graded']))
-                ].copy()
+                # --- NUEVA REGLA: VALIDACIÓN DE PUNTAJE PARA AUTOEVALUACIONES ---
+                if "AE" in actividad_objetivo.upper():
+                    # Forzamos score a float para poder filtrar numéricamente
+                    df_canvas['score_num'] = df_canvas['score'].apply(forzar_score_float)
+                    
+                    # Para las AE, un cumplidor válido DEBE tener estado apto Y nota >= 60
+                    entregas_validas = df_canvas[
+                        (df_canvas['actividad_limpia'] == actividad_objetivo) & 
+                        (df_canvas['workflow state'].isin(['submitted', 'graded'])) &
+                        (df_canvas['score_num'] >= 60.0)
+                    ].copy()
+                else:
+                    # Para las API, se mantiene la regla original de solo verificar entrega
+                    entregas_validas = df_canvas[
+                        (df_canvas['actividad_limpia'] == actividad_objetivo) & 
+                        (df_canvas['workflow state'].isin(['submitted', 'graded']))
+                    ].copy()
+
                 entregas_validas['llave_cruce'] = entregas_validas['id_match'] + "_" + entregas_validas['materia_match']
                 lista_cumplidores = entregas_validas['llave_cruce'].unique()
                 
@@ -321,7 +333,6 @@ if archivo_csv:
                 else:
                     st.session_state.df_final_procesado = df_resultado_crudo[['dni', 'nombre', 'materia', 'actividad']].copy()
             
-            # Guardamos sufijo en nombre del archivo indicando el filtro para no pisarse
             sufijo_cohorte = "_NI" if filtro_ingreso == "Solo Nuevos Ingresantes (NI)" else ("_RI" if filtro_ingreso == "Solo Reingresantes (RI)" else "")
             st.session_state.nombre_base += sufijo_cohorte
             st.session_state.opcion_base_guardada = opcion_base
@@ -338,11 +349,37 @@ if archivo_csv:
         
         st.write("### 📥 Descargar Archivos")
         output = io.BytesIO()
+        
         if opcion_guardada == "Base para HubSpot":
             with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
                 df_final.to_excel(writer, index=False, header=True)
             st.download_button(label=f"📥 Descargar Base HubSpot ({total_filas} filas)", data=output.getvalue(), file_name=f"{st.session_state.nombre_base}-HUB.xlsx", type="primary")
         else:
+            zip_buffer = io.BytesIO()
+            with zipfile.ZipFile(zip_buffer, "w", zipfile.ZIP_DEFLATED) as zip_file:
+                for i in range(0, total_filas, 100):
+                    chunk = df_final.iloc[i : i + 100]
+                    parte = (i // 100) + 1
+                    
+                    chunk_buffer = io.BytesIO()
+                    with pd.ExcelWriter(chunk_buffer, engine='xlsxwriter') as writer:
+                        chunk.to_excel(writer, index=False, header=False)
+                    
+                    nombre_archivo_parte = f"{st.session_state.nombre_base}-WSP_{parte}.xlsx"
+                    zip_file.writestr(nombre_archivo_parte, chunk_buffer.getvalue())
+            
+            st.download_button(
+                label=f"📥 Descargar Todas las Partes (.ZIP)",
+                data=zip_buffer.getvalue(),
+                file_name=f"{st.session_state.nombre_base}-TODAS_LAS_PARTES.zip",
+                type="primary",
+                use_container_width=True
+            )
+            
+            st.markdown("<p style='text-align: center; color: gray; margin-top:-10px;'>Ideal para bajar todo junto en un clic y descomprimirlo en tu carpeta</p>", unsafe_allow_html=True)
+            st.write("---")
+            st.write("📂 *O si preferís, podés bajarlas de manera individual:*")
+            
             grid = st.columns(3)
             for i in range(0, total_filas, 100):
                 chunk = df_final.iloc[i : i + 100]
@@ -351,7 +388,7 @@ if archivo_csv:
                 with pd.ExcelWriter(out_chunk, engine='xlsxwriter') as writer:
                     chunk.to_excel(writer, index=False, header=False)
                 with grid[(i//100) % 3]:
-                    st.download_button(label=f"📥 Parte {parte} ({len(chunk)} filas)", data=out_chunk.getvalue(), file_name=f"{st.session_state.nombre_base}-WSP_{parte}.xlsx")
+                    st.download_button(label=f"📦 Parte {parte} ({len(chunk)} filas)", data=out_chunk.getvalue(), file_name=f"{st.session_state.nombre_base}-WSP_{parte}.xlsx")
         
         st.write("### 👁️ Vista previa de salida:")
         st.dataframe(df_final)
