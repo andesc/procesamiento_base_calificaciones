@@ -3,6 +3,7 @@ import pandas as pd
 import io
 import re
 import zipfile
+from datetime import datetime
 
 # --- CONFIGURACIÓN DE LA PÁGINA ---
 st.set_page_config(page_title="Generador de bases", page_icon="🛠️")
@@ -44,7 +45,6 @@ def forzar_id_string(valor):
     except: return str(valor).strip()
 
 def forzar_score_float(valor):
-    """Convierte la nota a número flotante de forma segura para validar aprobados"""
     if pd.isna(valor): return 0.0
     try: return float(str(valor).strip())
     except: return 0.0
@@ -56,6 +56,16 @@ def homologar_actividad(nombre_tarea):
         if f"API{i}" in n or f"API {i}" in n or f"AP{i}" in n: return f"API {i}"
         if f"AE{i}" in n or f"AE {i}" in n: return f"AE {i}"
     return "OTRO"
+
+def normalizar_nombre_actividad_wsp(actividad_original):
+    """Transforma nombres de actividades a formatos limpios tipo 'Autoevaluacion 1' para WhatsApp"""
+    act_up = actividad_original.upper()
+    for i in range(1, 5):
+        if f"AE {i}" in act_up or f"AE{i}" in act_up or f"MÓDULO {i}" in act_up or f"MODULO {i}" in act_up:
+            return f"Autoevaluacion {i}"
+        if f"API {i}" in act_up or f"API{i}" in act_up:
+            return f"API {i}"
+    return actividad_original
 
 MATERIAS_EXCLUIR_API = [
     "ADMINISTRACIÓN GENERAL DE LA EMPRESA AGRARIA", "CEREMONIAL Y PROTOCOLO", "CIBERCAPACIDADES",
@@ -80,6 +90,19 @@ with col1:
 with col2:
     archivo_xlsx = st.file_uploader("2. Base de Alumnos (XLSX)", type=["xlsx"], key=f"xlsx_{st.session_state.count}")
 
+# Carga obligatoria oculta del diccionario de Áreas
+diccionario_areas = {}
+try:
+    # Se lee el archivo de mapeo que subiste de forma interna
+    df_areas_map = pd.read_csv("Materias_por_área.xlsx - Hoja1.csv")
+    df_areas_map.columns = df_areas_map.columns.str.strip().str.upper()
+    if "AREA" in df_areas_map.columns and "MATERIA" in df_areas_map.columns:
+        for _, row in df_areas_map.dropna(subset=["MATERIA"]).iterrows():
+            materia_key = limpiar_texto(row["MATERIA"])
+            diccionario_areas[materia_key] = str(row["AREA"]).strip().upper()
+except Exception as e:
+    st.error(f"Error al inicializar el diccionario de áreas técnicas: {e}")
+
 # --- DETECCIÓN DEL MODO DE TRABAJO ---
 modo_trabajo = None
 archivos_listos = False
@@ -95,9 +118,8 @@ elif archivo_xlsx and not archivo_csv:
     modo_trabajo = "ACCIONES_DIARIAS"
     archivos_listos = True
 elif archivo_csv and not archivo_xlsx:
-    st.warning("⚠️ **Archivo intermedio requerido:** Para procesar un reporte de Canvas es obligatorio cargar también la Base de Alumnos (XLSX) para obtener los datos de contacto y cohorte.")
+    st.warning("⚠️ **Archivo intermedio requerido:** Para procesar un reporte de Canvas es obligatorio cargar también la Base de Alumnos (XLSX).")
 
-# Prelectura del Excel para extraer períodos dinámicos
 if archivo_xlsx:
     try:
         df_excel_prelectura = pd.read_excel(archivo_xlsx)
@@ -108,7 +130,6 @@ if archivo_xlsx:
     except Exception as e:
         st.error(f"Error al pre-leer el archivo Excel: {e}")
 
-# Prelectura del Canvas (si existe)
 if archivo_csv and modo_trabajo == "TRADICIONAL_CRUCE":
     contenido_bytes = archivo_csv.getvalue()
     try:
@@ -122,7 +143,7 @@ if archivo_csv and modo_trabajo == "TRADICIONAL_CRUCE":
     es_submissions = 'canvas user id' in cols_lower and 'assignment name' in cols_lower
 
 
-# --- INTERFAZ DINÁMICA SEGÚN EL MODO ---
+# --- INTERFAZ DINÁMICA ---
 if archivos_listos:
     st.divider()
     if modo_trabajo == "ACCIONES_DIARIAS":
@@ -156,12 +177,11 @@ if archivos_listos:
     st.markdown("### 🔍 Parámetros de Búsqueda")
     
     if modo_trabajo == "ACCIONES_DIARIAS":
-        # Selección exclusiva de Autoevaluaciones para acciones diarias
         actividad_objetivo = st.selectbox(
             "Selecciona la actividad a reclamar:", 
             ["Módulo 1 - Autoevaluación", "Módulo 2 - Autoevaluación", "Módulo 3 - Autoevaluación", "Módulo 4 - Autoevaluación"]
         )
-        materias_seleccionadas = [] # No aplica multiselect de materias en este modo simplificado
+        materias_seleccionadas = []
     else:
         if es_submissions:
             st.info("📂 **Reporte de Entregas (Submissions) detectado.**")
@@ -176,7 +196,7 @@ if archivos_listos:
             materias_seleccionadas = []
             actividad_objetivo = "Materia Completa"
 
-    # --- CONFIGURACIÓN DEL TEMPLATE WHATSAPP ---
+    # --- CONFIGURACIÓN DEL TEMPLATE ---
     texto_template = ""
     dict_mapeo_params = {}
     params_detectados = []
@@ -210,11 +230,10 @@ if archivos_listos:
         st.markdown("---")
 
     # =======================================================
-    # --- PROCESAMIENTO AL PRESIONAR EL BOTÓN ---
+    # --- EJECUCIÓN DEL CÁLCULO ---
     # =======================================================
     if st.button("🔍 Calcular Deudores Reales", type="primary"):
         
-        # 1. Carga y Filtrado de Cohorte en el Excel Base (Aplica a ambos modos)
         df_excel = pd.read_excel(archivo_xlsx)
         df_excel.columns = df_excel.columns.str.strip()
         
@@ -227,11 +246,10 @@ if archivos_listos:
             elif filtro_ingreso == "Solo Reingresantes (RI)":
                 df_excel = df_excel[df_excel[col_p_carrera] != str(periodo_actual_sel).strip()]
 
-        # =======================================================
-        # --- MODO ACCIONES DIARIAS (SOLO EXCEL) ---
-        # =======================================================
+        # ----------------------------------------------------
+        # CASO 1: MODO ACCIONES DIARIAS (SOLO EXCEL)
+        # ----------------------------------------------------
         if modo_trabajo == "ACCIONES_DIARIAS":
-            # Mapeo de la selección a la columna real del Excel
             mapa_columnas_ae = {
                 "Módulo 1 - Autoevaluación": "nota_mod_1",
                 "Módulo 2 - Autoevaluación": "nota_mod_2",
@@ -241,11 +259,11 @@ if archivos_listos:
             columna_nota_objetivo = mapa_columnas_ae[actividad_objetivo]
             
             if columna_nota_objetivo in df_excel.columns:
-                # Filtrar deudores: Nota vacía OR Nota < 60
                 df_excel['nota_eval_num'] = df_excel[columna_nota_objetivo].apply(forzar_score_float)
-                df_deudores = df_excel[df_excel[columna_nota_objetivo].isna() | (df_excel['nota_eval_num'] < 60.0)].copy()
+                # NUEVO CRITERIO: Escala 0 a 10 -> Deudores son los vacíos o menores a 6.0
+                df_deudores = df_excel[df_excel[columna_nota_objetivo].isna() | (df_excel['nota_eval_num'] < 6.0)].copy()
             else:
-                st.error(f"❌ No se encontró la columna '{columna_nota_objetivo}' en tu archivo Excel.")
+                st.error(f"❌ No se encontró la columna '{columna_nota_objetivo}' en el Excel.")
                 st.stop()
                 
             df_excel.columns = df_excel.columns.str.lower()
@@ -258,22 +276,17 @@ if archivos_listos:
             col_dni_excel = 'dni' if 'dni' in df_deudores.columns else 'documento'
             df_deudores['dni'] = df_deudores[col_dni_excel].apply(forzar_id_string)
             
-            if opcion_base == "Base para HubSpot":
-                df_resultado_crudo = df_deudores[['email']].dropna().drop_duplicates()
-            else:
-                df_resultado_crudo = df_deudores[['dni', 'nombre', 'materia']].drop_duplicates(subset=['dni', 'materia'])
-                
-            st.session_state.nombre_base = f"Acciones_Diarias_{actividad_objetivo.replace(' ', '_')}"
+            df_resultado_crudo = df_deudores.copy()
+            st.session_state.nombre_base = f"SinM{actividad_objetivo.split(' ')[1]}"
 
-        # =======================================================
-        # --- MODO TRADICIONAL CRUCE (CANVAS + EXCEL) ---
-        # =======================================================
+        # ----------------------------------------------------
+        # CASO 2: MODO TRADICIONAL CRUCE (CANVAS + EXCEL)
+        # ----------------------------------------------------
         else:
             df_canvas = df_canvas_raw.copy()
             df_canvas.columns = cols_lower
             df_excel.columns = df_excel.columns.str.lower()
 
-            # --- CASO A: SUBMISSIONS ---
             if es_submissions:
                 df_canvas = df_canvas.dropna(subset=['canvas user id'])
                 df_canvas['id_match'] = df_canvas['canvas user id'].apply(forzar_id_string)
@@ -287,6 +300,7 @@ if archivos_listos:
 
                 if "AE" in actividad_objetivo.upper():
                     df_canvas['score_num'] = df_canvas['score'].apply(forzar_score_float)
+                    # En submissions de Canvas la escala suele ser de 0 a 100
                     entregas_validas = df_canvas[
                         (df_canvas['actividad_limpia'] == actividad_objetivo) & 
                         (df_canvas['workflow state'].isin(['submitted', 'graded'])) &
@@ -321,25 +335,19 @@ if archivos_listos:
                 df_deudores['materia'] = df_deudores['materia'].astype(str).str.strip().str.upper()
                 df_deudores['dni'] = df_deudores[col_dni_excel].apply(forzar_id_string)
                 
-                if opcion_base == "Base para HubSpot":
-                    df_resultado_crudo = df_deudores[['email']].dropna().drop_duplicates()
-                else:
-                    df_resultado_crudo = df_deudores[['dni', 'nombre', 'materia']].drop_duplicates(subset=['dni', 'materia'])
-                    if not materias_seleccionadas:
-                        mults = df_resultado_crudo['dni'].value_counts()
-                        df_resultado_crudo.loc[df_resultado_crudo['dni'].isin(mults[mults >= 2].index), 'materia'] = "DOS MATERIAS"
-                        df_resultado_crudo = df_resultado_crudo.drop_duplicates(subset=['dni', 'materia'])
-
-                st.session_state.nombre_base = f"Faltan_{actividad_objetivo.replace(' ', '_')}"
-
-            # --- CASO B: CALIFICACIONES ---
+                df_resultado_crudo = df_deudores.copy()
+                
+                # Identificar prefijo de nombre base para archivo tradicional
+                prefijo_act = "SinM" + actividad_objetivo.split(" ")[1] if "AE" in actividad_objetivo.upper() or "API" in actividad_objetivo.upper() else "Materia"
+                st.session_state.nombre_base = prefijo_act
             else:
+                # Caso Calificaciones estándar
                 df_canvas = df_canvas[~df_canvas['student'].str.contains('Points|Possible', case=False, na=False)]
                 col_dni_canvas = 'sis login id' if 'sis login id' in cols_lower else ('sis user id' if 'sis user id' in cols_lower else df_canvas.columns[1])
                 df_canvas['id_match'] = df_canvas[col_dni_canvas].apply(forzar_id_string)
                 
                 try: m_archivo = archivo_csv.name.split("Calificaciones-")[1].split(".")[0].replace("_", " ")
-                except: m_archivo = "MATERIA_DETECTADA"
+                except: m_archivo = "MATERIA"
                 
                 m_limpia = limpiar_texto(m_archivo)
                 excluir = any(x in m_limpia for x in ["API", "AP"])
@@ -352,104 +360,134 @@ if archivos_listos:
                 
                 df_cruce = pd.merge(df_canvas, df_excel, on='id_match', how='inner')
                 
-                if opcion_base == "Base para HubSpot":
-                    df_resultado_crudo = df_cruce[['email']].dropna().drop_duplicates()
-                else:
-                    df_f = pd.DataFrame()
-                    df_f['dni'] = df_cruce['id_match']
-                    df_f['nombre'] = df_cruce['student'].apply(extraer_primer_nombre)
-                    df_f['materia'] = m_archivo.strip().upper()
-                    df_resultado_crudo = df_f.drop_duplicates(subset=['dni', 'materia'])
-
-                st.session_state.nombre_base = f"Base_{m_archivo.replace(' ', '_')}"
+                df_f = pd.DataFrame()
+                df_f['dni'] = df_cruce['id_match']
+                df_f['nombre'] = df_cruce['student'].apply(extraer_primer_nombre)
+                df_f['materia'] = m_archivo.strip().upper()
+                if 'email' in df_cruce.columns: df_f['email'] = df_cruce['email']
+                
+                df_resultado_crudo = df_f.copy()
+                st.session_state.nombre_base = "Base_Completa"
 
         # =======================================================
-        # --- LIMPIEZA ABSOLUTA Y FORMATEO DE SALIDA ---
+        # APALANCAMIENTO DE CRITERIOS DE SALIDA (HUBSPOT vs WHATSAPP)
         # =======================================================
-        if 'nombre' in df_resultado_crudo.columns:
-            df_resultado_crudo['nombre'] = df_resultado_crudo['nombre'].apply(limpiar_caracteres_especiales)
-        if 'materia' in df_resultado_crudo.columns:
-            df_resultado_crudo['materia'] = df_resultado_crudo['materia'].apply(limpiar_caracteres_especiales)
-        if 'email' in df_resultado_crudo.columns:
-            df_resultado_crudo['email'] = df_resultado_crudo['email'].apply(limpiar_caracteres_especiales)
-
         if opcion_base == "Base para HubSpot":
-            st.session_state.df_final_procesado = df_resultado_crudo.copy()
+            df_resultado_final = df_resultado_crudo[['email']].dropna().drop_duplicates()
+            if 'email' in df_resultado_final.columns:
+                df_resultado_final['email'] = df_resultado_final['email'].apply(limpiar_caracteres_especiales)
+            st.session_state.df_final_procesado = df_resultado_final.copy()
         else:
-            df_resultado_crudo['actividad'] = limpiar_caracteres_especiales(actividad_objetivo)
+            # --- NUEVO CRITERIO OBLIGATORIO PARA WHATSAPP ---
+            # 1. Agrupación y validación de "DOS MATERIAS" antes de limpiar
+            df_wsp_base = df_resultado_crudo[['dni', 'nombre', 'materia']].copy()
+            df_wsp_base['materia_limpia_match'] = df_wsp_base['materia'].apply(limpiar_texto)
             
+            # Contamos cuántas materias deudoras tiene cada DNI
+            conteos_dni = df_wsp_base.groupby('dni')['materia_limpia_match'].nunique()
+            dnis_multi_materia = conteos_dni[conteos_dni >= 2].index
+            
+            # Reemplazo dinámico
+            df_wsp_base.loc[df_wsp_base['dni'].isin(dnis_multi_materia), 'materia'] = "DOS MATERIAS"
+            df_wsp_base = df_wsp_base.drop_duplicates(subset=['dni', 'materia']).copy()
+            
+            # 2. Nombre de la actividad normalizado ("Autoevaluacion 1", etc.)
+            df_wsp_base['actividad'] = normalizar_nombre_actividad_wsp(actividad_objetivo)
+            
+            # 3. Limpieza de caracteres y tildes estricta
+            df_wsp_base['nombre'] = df_wsp_base['nombre'].apply(limpiar_caracteres_especiales)
+            df_wsp_base['materia'] = df_wsp_base['materia'].apply(limpiar_caracteres_especiales)
+            df_wsp_base['actividad'] = df_wsp_base['actividad'].apply(limpiar_caracteres_especiales)
+            
+            # 4. MAPEÓ NUEVO: ASIGNACIÓN DE ÁREA TÉCNICA (ADMIN, COMU, IT)
+            df_wsp_base['materia_key_lookup'] = df_wsp_base['materia'].apply(limpiar_texto)
+            
+            def mapear_area_registro(row):
+                if row['materia'] == "DOS MATERIAS":
+                    return "ADMIN" # Criterio por defecto si viene cruzado o múltiple
+                return diccionario_areas.get(row['materia_key_lookup'], "ADMIN")
+                
+            df_wsp_base['area_tecnica'] = df_wsp_base.apply(mapear_area_registro, axis=1)
+            
+            # Construcción de variables del Template Meta si se cargaron
             if params_detectados:
                 df_meta_build = pd.DataFrame()
-                df_meta_build['dni'] = df_resultado_crudo['dni']
+                df_meta_build['dni'] = df_wsp_base['dni']
+                df_meta_build['area_tecnica'] = df_wsp_base['area_tecnica']
                 
                 for p in params_detectados:
                     tipo, valor = dict_mapeo_params[p]
                     if tipo == "fijo":
                         df_meta_build[f"param_{p}"] = limpiar_caracteres_especiales(valor)
                     else:
-                        df_meta_build[f"param_{p}"] = df_resultado_crudo[valor].values
+                        df_meta_build[f"param_{p}"] = df_wsp_base[valor].values
                 st.session_state.df_final_procesado = df_meta_build.copy()
             else:
-                st.session_state.df_final_procesado = df_resultado_crudo[['dni', 'nombre', 'materia', 'actividad']].copy()
+                st.session_state.df_final_procesado = df_wsp_base[['dni', 'nombre', 'materia', 'actividad', 'area_tecnica']].copy()
         
         sufijo_cohorte = "_NI" if filtro_ingreso == "Solo Nuevos Ingresantes (NI)" else ("_RI" if filtro_ingreso == "Solo Reingresantes (RI)" else "")
         st.session_state.nombre_base += sufijo_cohorte
         st.session_state.opcion_base_guardada = opcion_base
         st.rerun()
 
-    # --- ZONA DE RENDERIZADO DE RESULTADOS INDEPENDIENTE ---
+    # --- RENDERIZADO DE RESULTADOS ---
     if 'df_final_procesado' in st.session_state:
         df_final = st.session_state.df_final_procesado.copy()
         total_filas = len(df_final)
         opcion_guardada = st.session_state.get('opcion_base_guardada', opcion_base)
         
         st.divider()
-        st.success(f"✅ ¡Estructura de datos lista! Se generaron {total_filas} registros limpios y filtrados.")
+        st.success(f"✅ ¡Estructura procesada con éxito! Se obtuvieron {total_filas} registros filtrados.")
         
         st.write("### 📥 Descargar Archivos")
-        output = io.BytesIO()
         
         if opcion_guardada == "Base para HubSpot":
+            output = io.BytesIO()
             with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
                 df_final.to_excel(writer, index=False, header=True)
             st.download_button(label=f"📥 Descargar Base HubSpot ({total_filas} filas)", data=output.getvalue(), file_name=f"{st.session_state.nombre_base}-HUB.xlsx", type="primary")
         else:
+            # === NUEVA ESTRATEGIA: SEGMENTACIÓN POR ÁREA Y LOTES DE 200 ===
+            fecha_actual = datetime.now().strftime("%d_%m")
             zip_buffer = io.BytesIO()
+            
+            # Revisamos las áreas presentes para iterar ordenadamente
+            areas_presentes = ["ADMIN", "COMU", "IT"]
+            
             with zipfile.ZipFile(zip_buffer, "w", zipfile.ZIP_DEFLATED) as zip_file:
-                for i in range(0, total_filas, 100):
-                    chunk = df_final.iloc[i : i + 100]
-                    parte = (i // 100) + 1
+                for area in areas_presentes:
+                    df_area = df_final[df_final['area_tecnica'] == area].copy()
                     
-                    chunk_buffer = io.BytesIO()
-                    with pd.ExcelWriter(chunk_buffer, engine='xlsxwriter') as writer:
-                        chunk.to_excel(writer, index=False, header=False)
+                    # Eliminamos la columna de control interna para que no ensucie la salida
+                    if 'area_tecnica' in df_area.columns:
+                        df_area = df_area.drop(columns=['area_tecnica'])
+                        
+                    total_filas_area = len(df_area)
                     
-                    nombre_archivo_parte = f"{st.session_state.nombre_base}-WSP_{parte}.xlsx"
-                    zip_file.writestr(nombre_archivo_parte, chunk_buffer.getvalue())
+                    if total_filas_area > 0:
+                        # Fragmentación en lotes de 200 registros por archivo
+                        for i in range(0, total_filas_area, 200):
+                            chunk = df_area.iloc[i : i + 200]
+                            parte = (i // 200) + 1
+                            
+                            chunk_buffer = io.BytesIO()
+                            with pd.ExcelWriter(chunk_buffer, engine='xlsxwriter') as writer:
+                                chunk.to_excel(writer, index=False, header=False)
+                            
+                            # NUEVA LÓGICA DE NOMBRE EXIGIDA: AREA_SinMX_Fecha_ParteX.xlsx
+                            nombre_archivo_bloque = f"{area}_{st.session_state.nombre_base}_{fecha_actual}_Parte{parte}.xlsx"
+                            zip_file.writestr(nombre_archivo_bloque, chunk_buffer.getvalue())
             
             st.download_button(
-                label=f"📥 Descargar Todas las Partes (.ZIP)",
+                label=f"📥 Descargar Todas las Partes por Área (.ZIP)",
                 data=zip_buffer.getvalue(),
-                file_name=f"{st.session_state.nombre_base}-TODAS_LAS_PARTES.zip",
+                file_name=f"Bases_WhatsApp_{st.session_state.nombre_base}_{fecha_actual}.zip",
                 type="primary",
                 use_container_width=True
             )
+            st.markdown("<p style='text-align: center; color: gray; margin-top:-10px;'>Las carpetas internas contienen los archivos divididos por Área (ADMIN, COMU, IT) en tandas de 200 filas sin encabezado.</p>", unsafe_allow_html=True)
             
-            st.markdown("<p style='text-align: center; color: gray; margin-top:-10px;'>Ideal para bajar todo junto en un clic y descomprimirlo en tu carpeta</p>", unsafe_allow_html=True)
-            st.write("---")
-            st.write("📂 *O si preferís, podés bajarlas de manera individual:*")
-            
-            grid = st.columns(3)
-            for i in range(0, total_filas, 100):
-                chunk = df_final.iloc[i : i + 100]
-                parte = (i // 100) + 1
-                out_chunk = io.BytesIO()
-                with pd.ExcelWriter(out_chunk, engine='xlsxwriter') as writer:
-                    chunk.to_excel(writer, index=False, header=False)
-                with grid[(i//100) % 3]:
-                    st.download_button(label=f"📦 Parte {parte} ({len(chunk)} filas)", data=out_chunk.getvalue(), file_name=f"{st.session_state.nombre_base}-WSP_{parte}.xlsx")
-        
-        st.write("### 👁️ Vista previa de salida:")
+        st.write("### 👁️ Vista previa general del procesamiento:")
         st.dataframe(df_final)
 
 st.divider()
