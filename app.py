@@ -76,15 +76,40 @@ st.title("🛠️ Generador de bases")
 st.markdown("### 📥 Carga de archivos")
 col1, col2 = st.columns(2)
 with col1:
-    archivo_csv = st.file_uploader("1. Reporte de Canvas (CSV)", type=["csv"], key=f"csv_{st.session_state.count}")
+    archivo_csv = st.file_uploader("1. Reporte de Canvas (CSV - Opcional)", type=["csv"], key=f"csv_{st.session_state.count}")
 with col2:
     archivo_xlsx = st.file_uploader("2. Base de Alumnos (XLSX)", type=["xlsx"], key=f"xlsx_{st.session_state.count}")
 
+# --- DETECCIÓN DEL MODO DE TRABAJO ---
+modo_trabajo = None
 archivos_listos = False
-df_excel_prelectura = None
 periodos_disponibles = []
+df_canvas_raw = None
+cols_lower = []
+es_submissions = False
 
-if archivo_csv:
+if archivo_csv and archivo_xlsx:
+    modo_trabajo = "TRADICIONAL_CRUCE"
+    archivos_listos = True
+elif archivo_xlsx and not archivo_csv:
+    modo_trabajo = "ACCIONES_DIARIAS"
+    archivos_listos = True
+elif archivo_csv and not archivo_xlsx:
+    st.warning("⚠️ **Archivo intermedio requerido:** Para procesar un reporte de Canvas es obligatorio cargar también la Base de Alumnos (XLSX) para obtener los datos de contacto y cohorte.")
+
+# Prelectura del Excel para extraer períodos dinámicos
+if archivo_xlsx:
+    try:
+        df_excel_prelectura = pd.read_excel(archivo_xlsx)
+        df_excel_prelectura.columns = df_excel_prelectura.columns.str.strip()
+        col_periodo = [c for c in df_excel_prelectura.columns if c.lower() == 'periodo inicio carrera']
+        if col_periodo:
+            periodos_disponibles = sorted(df_excel_prelectura[col_periodo[0]].dropna().astype(str).unique())
+    except Exception as e:
+        st.error(f"Error al pre-leer el archivo Excel: {e}")
+
+# Prelectura del Canvas (si existe)
+if archivo_csv and modo_trabajo == "TRADICIONAL_CRUCE":
     contenido_bytes = archivo_csv.getvalue()
     try:
         df_canvas_raw = pd.read_csv(io.BytesIO(contenido_bytes), sep=',', engine='python', on_bad_lines='skip')
@@ -94,53 +119,50 @@ if archivo_csv:
         
     df_canvas_raw.columns = df_canvas_raw.columns.str.strip()
     cols_lower = [c.lower() for c in df_canvas_raw.columns]
-    
     es_submissions = 'canvas user id' in cols_lower and 'assignment name' in cols_lower
 
-    if archivo_xlsx:
-        try:
-            df_excel_prelectura = pd.read_excel(archivo_xlsx)
-            df_excel_prelectura.columns = df_excel_prelectura.columns.str.strip()
-            col_periodo = [c for c in df_excel_prelectura.columns if c.lower() == 'periodo inicio carrera']
-            if col_periodo:
-                periodos_disponibles = sorted(df_excel_prelectura[col_periodo[0]].dropna().astype(str).unique())
-        except Exception as e:
-            st.error(f"Error al pre-leer el archivo Excel: {e}")
 
-    if es_submissions and not archivo_xlsx:
-        st.warning("⚠️ **Archivo intermedio requerido:** Detectamos un reporte de Submissions. Por favor, carga la Base de Alumnos (XLSX) para activar los filtros y poder procesar.")
-    elif not es_submissions and not archivo_xlsx:
-        st.warning("⚠️ **Archivo intermedio requerido:** Para procesar Calificaciones y habilitar los filtros dinámicos (Períodos, HubSpot, etc.), es obligatorio cargar la Base de Alumnos (XLSX).")
+# --- INTERFAZ DINÁMICA SEGÚN EL MODO ---
+if archivos_listos:
+    st.divider()
+    if modo_trabajo == "ACCIONES_DIARIAS":
+        st.info("💡 **Subiste solo el excel 'base...', trabajaré en modo 'Bases acciones diarias'. Nos concentraremos en Actividades del módulo que selecciones a continuación.**")
     else:
-        archivos_listos = True
+        st.success("🔄 **Modo de Cruce Avanzado activado (Canvas + Base de Alumnos).**")
 
-    if archivos_listos:
-        st.divider()
-        st.markdown("### 🎯 Filtros Previos de Cohorte (NI / RI)")
-        
-        col_f1, col_f2 = st.columns(2)
-        with col_f1:
-            if periodos_disponibles:
-                periodo_actual_sel = st.selectbox("1. Selecciona el Período / Bimestre Actual:", options=periodos_disponibles, index=len(periodos_disponibles)-1)
-            else:
-                st.warning("⚠️ No se encontró la columna 'Periodo inicio Carrera' en el Excel.")
-                periodo_actual_sel = None
-        
-        with col_f2:
-            filtro_ingreso = st.selectbox(
-                "2. Tipo de Alumno a considerar:",
-                options=["Todos los alumnos (Sin filtro)", "Solo Nuevos Ingresantes (NI)", "Solo Reingresantes (RI)"]
-            )
-
-        st.divider()
-        st.markdown("### ⚙️ Configuración del Destino")
-        opcion_base = st.radio(
-            "Selecciona el tipo de base que deseas generar:", 
-            ["Base para HubSpot", "Base para Whatsapp"], 
-            key="radio_opcion"
+    st.markdown("### 🎯 Filtros Previos de Cohorte (NI / RI)")
+    col_f1, col_f2 = st.columns(2)
+    with col_f1:
+        if periodos_disponibles:
+            periodo_actual_sel = st.selectbox("1. Selecciona el Período / Bimestre Actual:", options=periodos_disponibles, index=len(periodos_disponibles)-1)
+        else:
+            st.warning("⚠️ No se encontró la columna 'Periodo inicio Carrera' en el Excel.")
+            periodo_actual_sel = None
+    
+    with col_f2:
+        filtro_ingreso = st.selectbox(
+            "2. Tipo de Alumno a considerar:",
+            options=["Todos los alumnos (Sin filtro)", "Solo Nuevos Ingresantes (NI)", "Solo Reingresantes (RI)"]
         )
 
-        st.markdown("### 🔍 Parámetros de Búsqueda")
+    st.divider()
+    st.markdown("### ⚙️ Configuración del Destino")
+    opcion_base = st.radio(
+        "Selecciona el tipo de base que deseas generar:", 
+        ["Base para HubSpot", "Base para Whatsapp"], 
+        key="radio_opcion"
+    )
+
+    st.markdown("### 🔍 Parámetros de Búsqueda")
+    
+    if modo_trabajo == "ACCIONES_DIARIAS":
+        # Selección exclusiva de Autoevaluaciones para acciones diarias
+        actividad_objetivo = st.selectbox(
+            "Selecciona la actividad a reclamar:", 
+            ["Módulo 1 - Autoevaluación", "Módulo 2 - Autoevaluación", "Módulo 3 - Autoevaluación", "Módulo 4 - Autoevaluación"]
+        )
+        materias_seleccionadas = [] # No aplica multiselect de materias en este modo simplificado
+    else:
         if es_submissions:
             st.info("📂 **Reporte de Entregas (Submissions) detectado.**")
             idx_m = cols_lower.index('course name') if 'course name' in cols_lower else 0
@@ -154,60 +176,104 @@ if archivo_csv:
             materias_seleccionadas = []
             actividad_objetivo = "Materia Completa"
 
-        # --- CONFIGURACIÓN DEL TEMPLATE ---
-        texto_template = ""
-        dict_mapeo_params = {}
-        params_detectados = []
+    # --- CONFIGURACIÓN DEL TEMPLATE WHATSAPP ---
+    texto_template = ""
+    dict_mapeo_params = {}
+    params_detectados = []
 
-        if opcion_base == "Base para Whatsapp":
-            st.markdown("---")
-            st.markdown("### 📝 Configuración opcional: Template de Meta")
-            texto_template = st.text_area(
-                "Pegá el contenido de tu plantilla de Meta aquí si deseas estructurar las columnas de salida:",
-                placeholder="Hola {{1}}, recordá entregar la actividad de {{2}}.",
-                key="template_meta_antepuesto"
-            )
+    if opcion_base == "Base para Whatsapp":
+        st.markdown("---")
+        st.markdown("### 📝 Configuración opcional: Template de Meta")
+        texto_template = st.text_area(
+            "Pegá el contenido de tu plantilla de Meta aquí si deseas estructurar las columnas de salida:",
+            placeholder="Hola {{1}}, recordá entregar la actividad de {{2}}.",
+            key="template_meta_antepuesto"
+        )
+        
+        params_detectados = sorted(list(set(re.findall(r'\{\{(\d+)\}\}', texto_template))), key=int)
+        if params_detectados:
+            st.info(f"💡 Variables dinámicas detectadas: {len(params_detectados)}")
+            cols_p = st.columns(min(len(params_detectados), 4))
             
-            params_detectados = sorted(list(set(re.findall(r'\{\{(\d+)\}\}', texto_template))), key=int)
-            if params_detectados:
-                st.info(f"💡 Variables dinámicas detectadas: {len(params_detectados)}")
-                cols_p = st.columns(min(len(params_detectados), 4))
-                
-                for idx, p in enumerate(params_detectados):
-                    with cols_p[idx % 4]:
-                        seleccion = st.selectbox(
-                            f"Variable {{{{ {p} }}}}:", 
-                            options=["dni", "nombre", "materia", "actividad", "✍️ Texto Fijo"], 
-                            key=f"sel_{p}"
-                        )
-                        if seleccion == "✍️ Texto Fijo":
-                            txt_fijo = st.text_input(f"Texto fijo para {{{{ {p} }}}}:", key=f"fijo_{p}")
-                            dict_mapeo_params[p] = ("fijo", txt_fijo)
-                        else:
-                            dict_mapeo_params[p] = ("columna", seleccion)
-            st.markdown("---")
+            for idx, p in enumerate(params_detectados):
+                with cols_p[idx % 4]:
+                    seleccion = st.selectbox(
+                        f"Variable {{{{ {p} }}}}:", 
+                        options=["dni", "nombre", "materia", "actividad", "✍️ Texto Fijo"], 
+                        key=f"sel_{p}"
+                    )
+                    if seleccion == "✍️ Texto Fijo":
+                        txt_fijo = st.text_input(f"Texto fijo para {{{{ {p} }}}}:", key=f"fijo_{p}")
+                        dict_mapeo_params[p] = ("fijo", txt_fijo)
+                    else:
+                        dict_mapeo_params[p] = ("columna", seleccion)
+        st.markdown("---")
 
-        if st.button("🔍 Calcular Deudores Reales", type="primary"):
+    # =======================================================
+    # --- PROCESAMIENTO AL PRESIONAR EL BOTÓN ---
+    # =======================================================
+    if st.button("🔍 Calcular Deudores Reales", type="primary"):
+        
+        # 1. Carga y Filtrado de Cohorte en el Excel Base (Aplica a ambos modos)
+        df_excel = pd.read_excel(archivo_xlsx)
+        df_excel.columns = df_excel.columns.str.strip()
+        
+        if periodo_actual_sel:
+            col_p_carrera = [c for c in df_excel.columns if c.lower() == 'periodo inicio carrera'][0]
+            df_excel[col_p_carrera] = df_excel[col_p_carrera].astype(str).str.strip()
+            
+            if filtro_ingreso == "Solo Nuevos Ingresantes (NI)":
+                df_excel = df_excel[df_excel[col_p_carrera] == str(periodo_actual_sel).strip()]
+            elif filtro_ingreso == "Solo Reingresantes (RI)":
+                df_excel = df_excel[df_excel[col_p_carrera] != str(periodo_actual_sel).strip()]
+
+        # =======================================================
+        # --- MODO ACCIONES DIARIAS (SOLO EXCEL) ---
+        # =======================================================
+        if modo_trabajo == "ACCIONES_DIARIAS":
+            # Mapeo de la selección a la columna real del Excel
+            mapa_columnas_ae = {
+                "Módulo 1 - Autoevaluación": "nota_mod_1",
+                "Módulo 2 - Autoevaluación": "nota_mod_2",
+                "Módulo 3 - Autoevaluación": "nota_mod_3",
+                "Módulo 4 - Autoevaluación": "nota_mod_4"
+            }
+            columna_nota_objetivo = mapa_columnas_ae[actividad_objetivo]
+            
+            if columna_nota_objetivo in df_excel.columns:
+                # Filtrar deudores: Nota vacía OR Nota < 60
+                df_excel['nota_eval_num'] = df_excel[columna_nota_objetivo].apply(forzar_score_float)
+                df_deudores = df_excel[df_excel[columna_nota_objetivo].isna() | (df_excel['nota_eval_num'] < 60.0)].copy()
+            else:
+                st.error(f"❌ No se encontró la columna '{columna_nota_objetivo}' en tu archivo Excel.")
+                st.stop()
+                
+            df_excel.columns = df_excel.columns.str.lower()
+            df_deudores.columns = df_deudores.columns.str.lower()
+            
+            col_n = 'nombres' if 'nombres' in df_deudores.columns else df_deudores.columns[2]
+            df_deudores['nombre'] = df_deudores[col_n].apply(extraer_primer_nombre)
+            df_deudores['materia'] = df_deudores['materia'].astype(str).str.strip().str.upper()
+            
+            col_dni_excel = 'dni' if 'dni' in df_deudores.columns else 'documento'
+            df_deudores['dni'] = df_deudores[col_dni_excel].apply(forzar_id_string)
+            
+            if opcion_base == "Base para HubSpot":
+                df_resultado_crudo = df_deudores[['email']].dropna().drop_duplicates()
+            else:
+                df_resultado_crudo = df_deudores[['dni', 'nombre', 'materia']].drop_duplicates(subset=['dni', 'materia'])
+                
+            st.session_state.nombre_base = f"Acciones_Diarias_{actividad_objetivo.replace(' ', '_')}"
+
+        # =======================================================
+        # --- MODO TRADICIONAL CRUCE (CANVAS + EXCEL) ---
+        # =======================================================
+        else:
             df_canvas = df_canvas_raw.copy()
             df_canvas.columns = cols_lower
-
-            df_excel = pd.read_excel(archivo_xlsx)
-            df_excel.columns = df_excel.columns.str.strip()
-            
-            if periodo_actual_sel:
-                col_p_carrera = [c for c in df_excel.columns if c.lower() == 'periodo inicio carrera'][0]
-                df_excel[col_p_carrera] = df_excel[col_p_carrera].astype(str).str.strip()
-                
-                if filtro_ingreso == "Solo Nuevos Ingresantes (NI)":
-                    df_excel = df_excel[df_excel[col_p_carrera] == str(periodo_actual_sel).strip()]
-                elif filtro_ingreso == "Solo Reingresantes (RI)":
-                    df_excel = df_excel[df_excel[col_p_carrera] != str(periodo_actual_sel).strip()]
-
             df_excel.columns = df_excel.columns.str.lower()
 
-            # ==========================================
-            # --- CASO 1: SUBMISSIONS ---
-            # ==========================================
+            # --- CASO A: SUBMISSIONS ---
             if es_submissions:
                 df_canvas = df_canvas.dropna(subset=['canvas user id'])
                 df_canvas['id_match'] = df_canvas['canvas user id'].apply(forzar_id_string)
@@ -219,19 +285,14 @@ if archivo_csv:
                 if "API" in actividad_objetivo.upper():
                     df_canvas = df_canvas[~df_canvas['materia_match'].isin(LISTA_NEGRA_LIMPIA)]
 
-                # --- NUEVA REGLA: VALIDACIÓN DE PUNTAJE PARA AUTOEVALUACIONES ---
                 if "AE" in actividad_objetivo.upper():
-                    # Forzamos score a float para poder filtrar numéricamente
                     df_canvas['score_num'] = df_canvas['score'].apply(forzar_score_float)
-                    
-                    # Para las AE, un cumplidor válido DEBE tener estado apto Y nota >= 60
                     entregas_validas = df_canvas[
                         (df_canvas['actividad_limpia'] == actividad_objetivo) & 
                         (df_canvas['workflow state'].isin(['submitted', 'graded'])) &
                         (df_canvas['score_num'] >= 60.0)
                     ].copy()
                 else:
-                    # Para las API, se mantiene la regla original de solo verificar entrega
                     entregas_validas = df_canvas[
                         (df_canvas['actividad_limpia'] == actividad_objetivo) & 
                         (df_canvas['workflow state'].isin(['submitted', 'graded']))
@@ -271,9 +332,7 @@ if archivo_csv:
 
                 st.session_state.nombre_base = f"Faltan_{actividad_objetivo.replace(' ', '_')}"
 
-            # ==========================================
-            # --- CASO 2: CALIFICACIONES ---
-            # ==========================================
+            # --- CASO B: CALIFICACIONES ---
             else:
                 df_canvas = df_canvas[~df_canvas['student'].str.contains('Points|Possible', case=False, na=False)]
                 col_dni_canvas = 'sis login id' if 'sis login id' in cols_lower else ('sis user id' if 'sis user id' in cols_lower else df_canvas.columns[1])
@@ -304,39 +363,39 @@ if archivo_csv:
 
                 st.session_state.nombre_base = f"Base_{m_archivo.replace(' ', '_')}"
 
-            # =======================================================
-            # --- APLICACIÓN DE LIMPIEZA ABSOLUTA DE CARACTERES ---
-            # =======================================================
-            if 'nombre' in df_resultado_crudo.columns:
-                df_resultado_crudo['nombre'] = df_resultado_crudo['nombre'].apply(limpiar_caracteres_especiales)
-            if 'materia' in df_resultado_crudo.columns:
-                df_resultado_crudo['materia'] = df_resultado_crudo['materia'].apply(limpiar_caracteres_especiales)
-            if 'email' in df_resultado_crudo.columns:
-                df_resultado_crudo['email'] = df_resultado_crudo['email'].apply(limpiar_caracteres_especiales)
+        # =======================================================
+        # --- LIMPIEZA ABSOLUTA Y FORMATEO DE SALIDA ---
+        # =======================================================
+        if 'nombre' in df_resultado_crudo.columns:
+            df_resultado_crudo['nombre'] = df_resultado_crudo['nombre'].apply(limpiar_caracteres_especiales)
+        if 'materia' in df_resultado_crudo.columns:
+            df_resultado_crudo['materia'] = df_resultado_crudo['materia'].apply(limpiar_caracteres_especiales)
+        if 'email' in df_resultado_crudo.columns:
+            df_resultado_crudo['email'] = df_resultado_crudo['email'].apply(limpiar_caracteres_especiales)
 
-            if opcion_base == "Base para HubSpot":
-                st.session_state.df_final_procesado = df_resultado_crudo.copy()
-            else:
-                df_resultado_crudo['actividad'] = limpiar_caracteres_especiales(actividad_objetivo)
-                
-                if params_detectados:
-                    df_meta_build = pd.DataFrame()
-                    df_meta_build['dni'] = df_resultado_crudo['dni']
-                    
-                    for p in params_detectados:
-                        tipo, valor = dict_mapeo_params[p]
-                        if tipo == "fijo":
-                            df_meta_build[f"param_{p}"] = limpiar_caracteres_especiales(valor)
-                        else:
-                            df_meta_build[f"param_{p}"] = df_resultado_crudo[valor].values
-                    st.session_state.df_final_procesado = df_meta_build.copy()
-                else:
-                    st.session_state.df_final_procesado = df_resultado_crudo[['dni', 'nombre', 'materia', 'actividad']].copy()
+        if opcion_base == "Base para HubSpot":
+            st.session_state.df_final_procesado = df_resultado_crudo.copy()
+        else:
+            df_resultado_crudo['actividad'] = limpiar_caracteres_especiales(actividad_objetivo)
             
-            sufijo_cohorte = "_NI" if filtro_ingreso == "Solo Nuevos Ingresantes (NI)" else ("_RI" if filtro_ingreso == "Solo Reingresantes (RI)" else "")
-            st.session_state.nombre_base += sufijo_cohorte
-            st.session_state.opcion_base_guardada = opcion_base
-            st.rerun()
+            if params_detectados:
+                df_meta_build = pd.DataFrame()
+                df_meta_build['dni'] = df_resultado_crudo['dni']
+                
+                for p in params_detectados:
+                    tipo, valor = dict_mapeo_params[p]
+                    if tipo == "fijo":
+                        df_meta_build[f"param_{p}"] = limpiar_caracteres_especiales(valor)
+                    else:
+                        df_meta_build[f"param_{p}"] = df_resultado_crudo[valor].values
+                st.session_state.df_final_procesado = df_meta_build.copy()
+            else:
+                st.session_state.df_final_procesado = df_resultado_crudo[['dni', 'nombre', 'materia', 'actividad']].copy()
+        
+        sufijo_cohorte = "_NI" if filtro_ingreso == "Solo Nuevos Ingresantes (NI)" else ("_RI" if filtro_ingreso == "Solo Reingresantes (RI)" else "")
+        st.session_state.nombre_base += sufijo_cohorte
+        st.session_state.opcion_base_guardada = opcion_base
+        st.rerun()
 
     # --- ZONA DE RENDERIZADO DE RESULTADOS INDEPENDIENTE ---
     if 'df_final_procesado' in st.session_state:
@@ -345,7 +404,7 @@ if archivo_csv:
         opcion_guardada = st.session_state.get('opcion_base_guardada', opcion_base)
         
         st.divider()
-        st.success(f"✅ ¡Estructura de datos lista! Se generaron {total_filas} registros filtrados y limpios.")
+        st.success(f"✅ ¡Estructura de datos lista! Se generaron {total_filas} registros limpios y filtrados.")
         
         st.write("### 📥 Descargar Archivos")
         output = io.BytesIO()
