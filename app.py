@@ -93,7 +93,6 @@ with col2:
 # Carga obligatoria oculta del diccionario de Áreas
 diccionario_areas = {}
 try:
-    # Se lee el archivo de mapeo que subiste de forma interna
     df_areas_map = pd.read_csv("Materias_por_área.xlsx - Hoja1.csv")
     df_areas_map.columns = df_areas_map.columns.str.strip().str.upper()
     if "AREA" in df_areas_map.columns and "MATERIA" in df_areas_map.columns:
@@ -260,7 +259,6 @@ if archivos_listos:
             
             if columna_nota_objetivo in df_excel.columns:
                 df_excel['nota_eval_num'] = df_excel[columna_nota_objetivo].apply(forzar_score_float)
-                # NUEVO CRITERIO: Escala 0 a 10 -> Deudores son los vacíos o menores a 6.0
                 df_deudores = df_excel[df_excel[columna_nota_objetivo].isna() | (df_excel['nota_eval_num'] < 6.0)].copy()
             else:
                 st.error(f"❌ No se encontró la columna '{columna_nota_objetivo}' en el Excel.")
@@ -300,7 +298,6 @@ if archivos_listos:
 
                 if "AE" in actividad_objetivo.upper():
                     df_canvas['score_num'] = df_canvas['score'].apply(forzar_score_float)
-                    # En submissions de Canvas la escala suele ser de 0 a 100
                     entregas_validas = df_canvas[
                         (df_canvas['actividad_limpia'] == actividad_objetivo) & 
                         (df_canvas['workflow state'].isin(['submitted', 'graded'])) &
@@ -337,11 +334,9 @@ if archivos_listos:
                 
                 df_resultado_crudo = df_deudores.copy()
                 
-                # Identificar prefijo de nombre base para archivo tradicional
                 prefijo_act = "SinM" + actividad_objetivo.split(" ")[1] if "AE" in actividad_objetivo.upper() or "API" in actividad_objetivo.upper() else "Materia"
                 st.session_state.nombre_base = prefijo_act
             else:
-                # Caso Calificaciones estándar
                 df_canvas = df_canvas[~df_canvas['student'].str.contains('Points|Possible', case=False, na=False)]
                 col_dni_canvas = 'sis login id' if 'sis login id' in cols_lower else ('sis user id' if 'sis user id' in cols_lower else df_canvas.columns[1])
                 df_canvas['id_match'] = df_canvas[col_dni_canvas].apply(forzar_id_string)
@@ -378,38 +373,30 @@ if archivos_listos:
                 df_resultado_final['email'] = df_resultado_final['email'].apply(limpiar_caracteres_especiales)
             st.session_state.df_final_procesado = df_resultado_final.copy()
         else:
-            # --- NUEVO CRITERIO OBLIGATORIO PARA WHATSAPP ---
-            # 1. Agrupación y validación de "DOS MATERIAS" antes de limpiar
             df_wsp_base = df_resultado_crudo[['dni', 'nombre', 'materia']].copy()
             df_wsp_base['materia_limpia_match'] = df_wsp_base['materia'].apply(limpiar_texto)
             
-            # Contamos cuántas materias deudoras tiene cada DNI
             conteos_dni = df_wsp_base.groupby('dni')['materia_limpia_match'].nunique()
             dnis_multi_materia = conteos_dni[conteos_dni >= 2].index
             
-            # Reemplazo dinámico
             df_wsp_base.loc[df_wsp_base['dni'].isin(dnis_multi_materia), 'materia'] = "DOS MATERIAS"
             df_wsp_base = df_wsp_base.drop_duplicates(subset=['dni', 'materia']).copy()
             
-            # 2. Nombre de la actividad normalizado ("Autoevaluacion 1", etc.)
             df_wsp_base['actividad'] = normalizar_nombre_actividad_wsp(actividad_objetivo)
             
-            # 3. Limpieza de caracteres y tildes estricta
             df_wsp_base['nombre'] = df_wsp_base['nombre'].apply(limpiar_caracteres_especiales)
             df_wsp_base['materia'] = df_wsp_base['materia'].apply(limpiar_caracteres_especiales)
             df_wsp_base['actividad'] = df_wsp_base['actividad'].apply(limpiar_caracteres_especiales)
             
-            # 4. MAPEÓ NUEVO: ASIGNACIÓN DE ÁREA TÉCNICA (ADMIN, COMU, IT)
             df_wsp_base['materia_key_lookup'] = df_wsp_base['materia'].apply(limpiar_texto)
             
             def mapear_area_registro(row):
                 if row['materia'] == "DOS MATERIAS":
-                    return "ADMIN" # Criterio por defecto si viene cruzado o múltiple
+                    return "ADMIN"
                 return diccionario_areas.get(row['materia_key_lookup'], "ADMIN")
                 
             df_wsp_base['area_tecnica'] = df_wsp_base.apply(mapear_area_registro, axis=1)
             
-            # Construcción de variables del Template Meta si se cargaron
             if params_detectados:
                 df_meta_build = pd.DataFrame()
                 df_meta_build['dni'] = df_wsp_base['dni']
@@ -447,25 +434,22 @@ if archivos_listos:
                 df_final.to_excel(writer, index=False, header=True)
             st.download_button(label=f"📥 Descargar Base HubSpot ({total_filas} filas)", data=output.getvalue(), file_name=f"{st.session_state.nombre_base}-HUB.xlsx", type="primary")
         else:
-            # === NUEVA ESTRATEGIA: SEGMENTACIÓN POR ÁREA Y LOTES DE 200 ===
+            # === CORRECCIÓN AQUÍ: SEGMENTACIÓN SÓLO SI EXISTE LA COLUMNA AREA_TECNICA ===
             fecha_actual = datetime.now().strftime("%d_%m")
             zip_buffer = io.BytesIO()
-            
-            # Revisamos las áreas presentes para iterar ordenadamente
             areas_presentes = ["ADMIN", "COMU", "IT"]
             
             with zipfile.ZipFile(zip_buffer, "w", zipfile.ZIP_DEFLATED) as zip_file:
                 for area in areas_presentes:
-                    df_area = df_final[df_final['area_tecnica'] == area].copy()
-                    
-                    # Eliminamos la columna de control interna para que no ensucie la salida
-                    if 'area_tecnica' in df_area.columns:
+                    if 'area_tecnica' in df_final.columns:
+                        df_area = df_final[df_final['area_tecnica'] == area].copy()
                         df_area = df_area.drop(columns=['area_tecnica'])
+                    else:
+                        df_area = df_final.copy()
                         
                     total_filas_area = len(df_area)
                     
                     if total_filas_area > 0:
-                        # Fragmentación en lotes de 200 registros por archivo
                         for i in range(0, total_filas_area, 200):
                             chunk = df_area.iloc[i : i + 200]
                             parte = (i // 200) + 1
@@ -474,7 +458,6 @@ if archivos_listos:
                             with pd.ExcelWriter(chunk_buffer, engine='xlsxwriter') as writer:
                                 chunk.to_excel(writer, index=False, header=False)
                             
-                            # NUEVA LÓGICA DE NOMBRE EXIGIDA: AREA_SinMX_Fecha_ParteX.xlsx
                             nombre_archivo_bloque = f"{area}_{st.session_state.nombre_base}_{fecha_actual}_Parte{parte}.xlsx"
                             zip_file.writestr(nombre_archivo_bloque, chunk_buffer.getvalue())
             
