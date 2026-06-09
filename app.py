@@ -69,7 +69,6 @@ def normalizar_nombre_actividad_wsp(actividad_original):
 
 # --- DICCIONARIO INTERNO FIJO DE MATERIAS POR ÁREA ---
 MATERIAS_POR_AREA_DICT = {
-    # AREA: ADMIN
     "ADMINISTRACION GENERAL DE LA EMPRESA AGRARIA": "ADMIN",
     "AGRICULTURA DIGITAL": "ADMIN",
     "ANALISIS DEL RIESGO": "ADMIN",
@@ -94,8 +93,6 @@ MATERIAS_POR_AREA_DICT = {
     "TRANSFORMACION E INNOVACION ORGANIZACIONAL": "ADMIN",
     "GESTION DE PRESUPUESTOS": "ADMIN",
     "GESTION DE PERSONAS": "ADMIN",
-    
-    # AREA: COMU
     "BASES OPERATIVAS DE EXPERIENCIA DEL CLIENTE": "COMU",
     "CEREMONIAL Y PROTOCOLO": "COMU",
     "COMERCIALIZACION Y REVENUE MANAGEMENT": "COMU",
@@ -121,8 +118,6 @@ MATERIAS_POR_AREA_DICT = {
     "REDACCION PERIODISTICA EN LA ERA DIGITAL": "COMU",
     "SISTEMAS DE GENERACION Y CONVERSION": "COMU",
     "TOMA DE DECISIONES PARA LA ACCION": "COMU",
-    
-    # AREA: IT
     "ADMINISTRACION DE SISTEMAS EN LA NUBE (SYSOPS ADMINISTRATION)": "IT",
     "ARQUITECTURA DE SOLUCIONES": "IT",
     "AUTOMATIZACION Y PROGRAMABILIDAD DE REDES": "IT",
@@ -137,84 +132,4 @@ MATERIAS_POR_AREA_DICT = {
 MATERIAS_EXCLUIR_API = [
     "ADMINISTRACIÓN GENERAL DE LA EMPRESA AGRARIA", "CEREMONIAL Y PROTOCOLO", "CIBERCAPACIDADES",
     "COMERCIALIZACIÓN Y REVENUE MANAGEMENT", "CULTURA DEL TRABAJO CALIDAD Y EQUIPOS",
-    "DECISIONES Y RESOLUCIONES EFICIENTES", "GESTIÓN DE LA PRODUCCIÓN ANIMAL", "GESTIÓN DE PERSONAS",
-    "LEARNING AGILITY", "MULTIMEDIOS", "TOMA DE DECISIONES PARA LA ACCIÓN", "ALIMENTOS BEBIDAS Y EVENTOS",
-    "DISEÑO DE SERVICIO AL CLIENTE", "GESTIÓN DE CULTIVOS EXTENSIVOS", "RESOLUCIÓN DE PROBLEMAS",
-    "COMUNICACIÓN EFECTIVA", "ORGANIZACIÓN DEL TIEMPO Y DEL TRABAJO", "MATEMÁTICA Y ESTADÍSTICA",
-    "PROCESO Y ESTRATEGIA DE MEJORA", "GESTIÓN DE PROYECTOS"
-]
-LISTA_NEGRA_LIMPIA = [limpiar_texto(m) for m in MATERIAS_EXCLUIR_API]
-
-# --- INICIALIZACIÓN DE ESTADOS ---
-if 'count' not in st.session_state: st.session_state.count = 0
-
-st.title("🛠️ Generador de bases")
-
-st.markdown("### 📥 Carga de archivos")
-col1, col2 = st.columns(2)
-with col1:
-    archivo_csv = st.file_uploader("1. Reporte de Canvas (CSV - Opcional)", type=["csv"], key=f"csv_{st.session_state.count}")
-with col2:
-    archivo_xlsx = st.file_uploader("2. Base de Alumnos (XLSX)", type=["xlsx"], key=f"xlsx_{st.session_state.count}")
-
-# --- DETECCIÓN DEL MODO DE TRABAJO ---
-modo_trabajo = None
-archivos_listos = False
-periodos_disponibles = []
-df_canvas_raw = None
-cols_lower = []
-es_submissions = False
-
-if archivo_csv and archivo_xlsx:
-    modo_trabajo = "TRADICIONAL_CRUCE"
-    archivos_listos = True
-elif archivo_xlsx and not archivo_csv:
-    modo_trabajo = "ACCIONES_DIARIAS"
-    archivos_listos = True
-elif archivo_csv and not archivo_xlsx:
-    st.warning("⚠️ **Archivo intermedio requerido:** Para procesar un reporte de Canvas es obligatorio cargar también la Base de Alumnos (XLSX).")
-
-if archivo_xlsx:
-    try:
-        df_excel_prelectura = pd.read_excel(archivo_xlsx)
-        df_excel_prelectura.columns = df_excel_prelectura.columns.str.strip()
-        col_periodo = [c for c in df_excel_prelectura.columns if c.lower() == 'periodo inicio carrera']
-        if col_periodo:
-            periodos_disponibles = sorted(df_excel_prelectura[col_periodo[0]].dropna().astype(str).unique())
-    except Exception as e:
-        st.error(f"Error al pre-leer el archivo Excel: {e}")
-
-if archivo_csv and modo_trabajo == "TRADICIONAL_CRUCE":
-    contenido_bytes = archivo_csv.getvalue()
-    try:
-        df_canvas_raw = pd.read_csv(io.BytesIO(contenido_bytes), sep=',', engine='python', on_bad_lines='skip')
-        if df_canvas_raw.shape[1] <= 1: raise ValueError
-    except:
-        df_canvas_raw = pd.read_csv(io.BytesIO(contenido_bytes), sep=';', engine='python', on_bad_lines='skip')
-        
-    df_canvas_raw.columns = df_canvas_raw.columns.str.strip()
-    cols_lower = [c.lower() for c in df_canvas_raw.columns]
-    es_submissions = 'canvas user id' in cols_lower and 'assignment name' in cols_lower
-
-
-# --- INTERFAZ DINÁMICA ---
-if archivos_listos:
-    st.divider()
-    if modo_trabajo == "ACCIONES_DIARIAS":
-        st.info("💡 **Subiste solo el excel 'base...', trabajaré en modo 'Bases acciones diarias'. Nos concentraremos en Actividades del módulo que selecciones a continuación.**")
-    else:
-        st.success("🔄 **Modo de Cruce Avanzado activado (Canvas + Base de Alumnos).**")
-
-    st.markdown("### 🎯 Filtros Previos de Cohorte (NI / RI)")
-    col_f1, col_f2 = st.columns(2)
-    with col_f1:
-        if periodos_disponibles:
-            periodo_actual_sel = st.selectbox("1. Selecciona el Período / Bimestre Actual:", options=periodos_disponibles, index=len(periodos_disponibles)-1)
-        else:
-            st.warning("⚠️ No se encontró la columna 'Periodo inicio Carrera' en el Excel.")
-            periodo_actual_sel = None
-    
-    with col_f2:
-        filtro_ingreso = st.selectbox(
-            "2. Tipo de Alumno a considerar:",
-            options=
+    "DECISIONES Y RESOLUCIONES EFICIENTES", "GESTIÓN DE LA PRODUCCIÓN
