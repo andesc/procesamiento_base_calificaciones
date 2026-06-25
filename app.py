@@ -22,9 +22,7 @@ def limpiar_caracteres_especiales(val):
     """Limpia tildes y convierte la Ñ en N para compatibilidad estricta con HubSpot y Meta (WhatsApp)"""
     if pd.isna(val): return ""
     s = str(val).strip()
-    # Reemplazo estricto de Ñ/ñ por N/n para evitar rebotes en Meta
     s = s.replace('Ñ', 'N').replace('ñ', 'n')
-    # Remover tildes manteniendo el caso (mayúscula/minúscula)
     remplazos = {
         'Á': 'A', 'É': 'E', 'Í': 'I', 'Ó': 'O', 'Ú': 'U',
         'á': 'a', 'é': 'e', 'í': 'i', 'ó': 'o', 'ú': 'u',
@@ -182,7 +180,6 @@ if archivo_csv:
                 df_excel = pd.read_excel(archivo_xlsx)
                 df_excel.columns = df_excel.columns.str.strip().str.lower()
                 
-                # LINEA CORREGIDA COMPLETA:
                 col_canvas_excel = 'canvas_id' if 'canvas_id' in df_excel.columns else ('canvas id' if 'canvas id' in df_excel.columns else 'id_alumno')
                 col_dni_excel = 'dni' if 'dni' in df_excel.columns else 'documento'
                 
@@ -215,12 +212,21 @@ if archivo_csv:
                 st.session_state.nombre_base = f"Faltan_{actividad_objetivo.replace(' ', '_')}"
 
             # ==========================================
-            # --- CASO 2: CALIFICACIONES ---
+            # --- CASO 2: CALIFICACIONES (CORREGIDO) ---
             # ==========================================
             else:
-                df_canvas = df_canvas[~df_canvas['student'].str.contains('Points|Possible', case=False, na=False)]
+                # 1. Eliminar filas de control de Canvas de forma segura (Points y solo lectura)
+                df_canvas = df_canvas[df_canvas['student'].notna()]
+                df_canvas = df_canvas[~df_canvas['student'].str.contains('Points|Possible|solo lectura|read only', case=False, na=False)]
                 
-                col_dni_canvas = 'sis login id' if 'sis login id' in cols_lower else ('sis user id' if 'sis user id' in cols_lower else df_canvas.columns[1])
+                # 2. Selección estricta de la columna DNI
+                if 'sis login id' in cols_lower:
+                    col_dni_canvas = 'sis login id'
+                elif 'login id' in cols_lower:
+                    col_dni_canvas = 'login id'
+                else:
+                    col_dni_canvas = 'sis user id' if 'sis user id' in cols_lower else df_canvas.columns[1]
+                
                 df_canvas['id_match'] = df_canvas[col_dni_canvas].apply(forzar_id_string)
                 
                 try: m_archivo = archivo_csv.name.split("Calificaciones-")[1].split(".")[0].replace("_", " ")
@@ -306,24 +312,4 @@ if archivo_csv:
         st.write("### 📥 Descargar Archivos")
         output = io.BytesIO()
         if opcion_guardada == "Base para HubSpot":
-            with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
-                df_final.to_excel(writer, index=False, header=True)
-            st.download_button(label=f"📥 Descargar Base HubSpot ({total_filas} filas)", data=output.getvalue(), file_name=f"{st.session_state.nombre_base}-HUB.xlsx", type="primary")
-        else:
-            grid = st.columns(3)
-            for i in range(0, total_filas, 100):
-                chunk = df_final.iloc[i : i + 100]
-                parte = (i // 100) + 1
-                out_chunk = io.BytesIO()
-                with pd.ExcelWriter(out_chunk, engine='xlsxwriter') as writer:
-                    chunk.to_excel(writer, index=False, header=False)
-                with grid[(i//100) % 3]:
-                    st.download_button(label=f"📥 Parte {parte} ({len(chunk)} filas)", data=out_chunk.getvalue(), file_name=f"{st.session_state.nombre_base}-WSP_{parte}.xlsx")
-        
-        st.write("### 👁️ Vista previa de salida:")
-        st.dataframe(df_final)
-
-st.divider()
-if st.button("➕ Nueva Carga"):
-    reiniciar_aplicacion()
-    st.rerun()
+            with pd.ExcelWriter(
