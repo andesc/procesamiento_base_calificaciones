@@ -3,24 +3,37 @@ import pandas as pd
 import io
 import re
 
-# --- CONFIGURACIÓN DE LA PÁGINA ---
-st.set_page_config(page_title="Generador de bases", page_icon="🛠️")
+# Configuración inicial de la página
+st.set_page_config(
+    page_title="Generador de bases", 
+    page_icon="🛠️"
+)
 
-# --- FUNCIONES DE UTILERÍA ---
 def reiniciar_aplicacion():
-    if 'df_final_procesado' in st.session_state: del st.session_state.df_final_procesado
-    if 'nombre_base' in st.session_state: del st.session_state.nombre_base
-    if 'opcion_base_guardada' in st.session_state: del st.session_state.opcion_base_guardada
+    if 'df_final_procesado' in st.session_state:
+        del st.session_state.df_final_procesado
+    if 'nombre_base' in st.session_state:
+        del st.session_state.nombre_base
+    if 'opcion_base_guardada' in st.session_state:
+        del st.session_state.opcion_base_guardada
     st.session_state.count += 1
 
 def limpiar_texto(texto):
-    if pd.isna(texto): return ""
+    if pd.isna(texto): 
+        return ""
     texto = str(texto).upper().strip()
-    return texto.replace('Ñ', 'NI').replace('Á', 'A').replace('É', 'E').replace('Í', 'I').replace('Ó', 'O').replace('Ú', 'U')
+    return (
+        texto.replace('Ñ', 'NI')
+        .replace('Á', 'A')
+        .replace('É', 'E')
+        .replace('Í', 'I')
+        .replace('Ó', 'O')
+        .replace('Ú', 'U')
+    )
 
 def limpiar_caracteres_especiales(val):
-    """Limpia tildes y convierte la Ñ en N para compatibilidad estricta con HubSpot y Meta (WhatsApp)"""
-    if pd.isna(val): return ""
+    if pd.isna(val): 
+        return ""
     s = str(val).strip()
     s = s.replace('Ñ', 'N').replace('ñ', 'n')
     remplazos = {
@@ -34,35 +47,54 @@ def limpiar_caracteres_especiales(val):
 
 def extraer_primer_nombre(celda):
     s = str(celda).strip()
-    parte_nombre = s.split(",")[1].strip() if "," in s else s
-    return parte_nombre.split()[0].capitalize() if parte_nombre.split() else ""
+    if "," in s:
+        parte_nombre = s.split(",")[1].strip()
+    else:
+        parte_nombre = s
+    partes = parte_nombre.split()
+    return partes[0].capitalize() if partes else ""
 
 def forzar_id_string(valor):
-    if pd.isna(valor): return ""
-    try: return str(int(float(str(valor).strip())))
-    except: return str(valor).strip()
+    if pd.isna(valor): 
+        return ""
+    try: 
+        return str(int(float(str(valor).strip())))
+    except: 
+        return str(valor).strip()
 
 def homologar_actividad(nombre_tarea):
-    if pd.isna(nombre_tarea): return "OTRO"
+    if pd.isna(nombre_tarea): 
+        return "OTRO"
     n = str(nombre_tarea).upper().strip()
     for i in range(1, 5):
-        if f"API{i}" in n or f"API {i}" in n or f"AP{i}" in n: return f"API {i}"
-        if f"AE{i}" in n or f"AE {i}" in n: return f"AE {i}"
+        if f"API{i}" in n or f"API {i}" in n or f"AP{i}" in n: 
+            return f"API {i}"
+        if f"AE{i}" in n or f"AE {i}" in n: 
+            return f"AE {i}"
     return "OTRO"
 
+# Lista de materias a excluir si la actividad es una API
 MATERIAS_EXCLUIR_API = [
-    "ADMINISTRACIÓN GENERAL DE LA EMPRESA AGRARIA", "CEREMONIAL Y PROTOCOLO", "CIBERCAPACIDADES",
-    "COMERCIALIZACIÓN Y REVENUE MANAGEMENT", "CULTURA DEL TRABAJO CALIDAD Y EQUIPOS",
-    "DECISIONES Y RESOLUCIONES EFICIENTES", "GESTIÓN DE LA PRODUCCIÓN ANIMAL", "GESTIÓN DE PERSONAS",
-    "LEARNING AGILITY", "MULTIMEDIOS", "TOMA DE DECISIONES PARA LA ACCIÓN", "ALIMENTOS BEBIDAS Y EVENTOS",
-    "DISEÑO DE SERVICIO AL CLIENTE", "GESTIÓN DE CULTIVOS EXTENSIVOS", "RESOLUCIÓN DE PROBLEMAS",
-    "COMUNICACIÓN EFECTIVA", "ORGANIZACIÓN DEL TIEMPO Y DEL TRABAJO", "MATEMÁTICA Y ESTADÍSTICA",
+    "ADMINISTRACIÓN GENERAL DE LA EMPRESA AGRARIA", 
+    "CEREMONIAL Y PROTOCOLO", "CIBERCAPACIDADES",
+    "COMERCIALIZACIÓN Y REVENUE MANAGEMENT", 
+    "CULTURA DEL TRABAJO CALIDAD Y EQUIPOS",
+    "DECISIONES Y RESOLUCIONES EFICIENTES", 
+    "GESTIÓN DE LA PRODUCCIÓN ANIMAL", "GESTIÓN DE PERSONAS",
+    "LEARNING AGILITY", "MULTIMEDIOS", 
+    "TOMA DE DECISIONES PARA LA ACCIÓN", 
+    "ALIMENTOS BEBIDAS Y EVENTOS",
+    "DISEÑO DE SERVICIO AL CLIENTE", 
+    "GESTIÓN DE CULTIVOS EXTENSIVOS", "RESOLUCIÓN DE PROBLEMAS",
+    "COMUNICACIÓN EFECTIVA", 
+    "ORGANIZACIÓN DEL TIEMPO Y DEL TRABAJO", 
+    "MATEMÁTICA Y ESTADÍSTICA",
     "PROCESO Y ESTRATEGIA DE MEJORA", "GESTIÓN DE PROYECTOS"
 ]
 LISTA_NEGRA_LIMPIA = [limpiar_texto(m) for m in MATERIAS_EXCLUIR_API]
 
-# --- INICIALIZACIÓN DE ESTADOS ---
-if 'count' not in st.session_state: st.session_state.count = 0
+if 'count' not in st.session_state: 
+    st.session_state.count = 0
 
 st.title("🛠️ Generador de bases")
 
@@ -77,24 +109,46 @@ st.divider()
 st.markdown("### 📥 Carga de archivos")
 col1, col2 = st.columns(2)
 with col1:
-    archivo_csv = st.file_uploader("1. Reporte de Canvas (CSV)", type=["csv"], key=f"csv_{st.session_state.count}")
+    archivo_csv = st.file_uploader(
+        "1. Reporte de Canvas (CSV)", 
+        type=["csv"], 
+        key=f"csv_{st.session_state.count}"
+    )
 with col2:
-    archivo_xlsx = st.file_uploader("2. Base de Alumnos (XLSX - Requerido para Submissions)", type=["xlsx"], key=f"xlsx_{st.session_state.count}")
+    archivo_xlsx = st.file_uploader(
+        "2. Base de Alumnos (XLSX - Requerido para Submissions)", 
+        type=["xlsx"], 
+        key=f"xlsx_{st.session_state.count}"
+    )
 
 archivos_listos = False
 
 if archivo_csv:
     contenido_bytes = archivo_csv.getvalue()
     try:
-        df_canvas_raw = pd.read_csv(io.BytesIO(contenido_bytes), sep=',', engine='python', on_bad_lines='skip')
-        if df_canvas_raw.shape[1] <= 1: raise ValueError
+        df_canvas_raw = pd.read_csv(
+            io.BytesIO(contenido_bytes), 
+            sep=',', 
+            engine='python', 
+            on_bad_lines='skip'
+        )
+        if df_canvas_raw.shape[1] <= 1: 
+            raise ValueError
     except:
-        df_canvas_raw = pd.read_csv(io.BytesIO(contenido_bytes), sep=';', engine='python', on_bad_lines='skip')
+        df_canvas_raw = pd.read_csv(
+            io.BytesIO(contenido_bytes), 
+            sep=';', 
+            engine='python', 
+            on_bad_lines='skip'
+        )
         
     df_canvas_raw.columns = df_canvas_raw.columns.str.strip()
     cols_lower = [c.lower() for c in df_canvas_raw.columns]
     
-    es_submissions = 'canvas user id' in cols_lower and 'assignment name' in cols_lower
+    es_submissions = (
+        'canvas user id' in cols_lower and 
+        'assignment name' in cols_lower
+    )
 
     if es_submissions and not archivo_xlsx:
         st.warning("⚠️ **Archivo intermedio requerido:** Detectamos un reporte de Submissions. Por favor, carga la Base de Alumnos (XLSX) para activar los filtros y poder procesar.")
@@ -108,18 +162,28 @@ if archivo_csv:
         
         if es_submissions:
             st.info("📂 **Reporte de Entregas (Submissions) detectado.**")
-            idx_m = cols_lower.index('course name') if 'course name' in cols_lower else 0
-            materias_disponibles = sorted(df_canvas_raw[df_canvas_raw.columns[idx_m]].dropna().unique())
+            if 'course name' in cols_lower:
+                idx_m = cols_lower.index('course name')
+            else:
+                idx_m = 0
+            materias_disponibles = sorted(
+                df_canvas_raw[df_canvas_raw.columns[idx_m]].dropna().unique()
+            )
             
-            materias_seleccionadas = st.multiselect("Seleccionar Materias (Vacío = Todas):", options=materias_disponibles)
-            actividad_objetivo = st.selectbox("Selecciona la actividad a reclamar:", ["API 1", "API 2", "API 3", "API 4", "AE 1", "AE 2", "AE 3", "AE 4"])
+            materias_seleccionadas = st.multiselect(
+                "Seleccionar Materias (Vacío = Todas):", 
+                options=materias_disponibles
+            )
+            actividad_objetivo = st.selectbox(
+                "Selecciona la actividad a reclamar:", 
+                ["API 1", "API 2", "API 3", "API 4", "AE 1", "AE 2", "AE 3", "AE 4"]
+            )
         else:
             st.info("📂 **Reporte de Calificaciones estándar detectado.**")
             st.markdown("*Este reporte procesa la materia completa de manera directa.*")
             materias_seleccionadas = []
             actividad_objetivo = "Materia Completa"
 
-        # --- CONFIGURACIÓN DEL TEMPLATE ---
         texto_template = ""
         dict_mapeo_params = {}
         params_detectados = []
@@ -133,7 +197,10 @@ if archivo_csv:
                 key="template_meta_antepuesto"
             )
             
-            params_detectados = sorted(list(set(re.findall(r'\{\{(\d+)\}\}', texto_template))), key=int)
+            params_detectados = sorted(
+                list(set(re.findall(r'\{\{(\d+)\}\}', texto_template))), 
+                key=int
+            )
             if params_detectados:
                 st.info(f"💡 Variables dinámicas detectadas: {len(params_detectados)}")
                 cols_p = st.columns(min(len(params_detectados), 4))
@@ -146,7 +213,10 @@ if archivo_csv:
                             key=f"sel_{p}"
                         )
                         if seleccion == "✍️ Texto Fijo":
-                            txt_fijo = st.text_input(f"Texto fijo para {{{{ {p} }}}}:", key=f"fijo_{p}")
+                            txt_fijo = st.text_input(
+                                f"Texto fijo para {{{{ {p} }}}}:", 
+                                key=f"fijo_{p}"
+                            )
                             dict_mapeo_params[p] = ("fijo", txt_fijo)
                         else:
                             dict_mapeo_params[p] = ("columna", seleccion)
@@ -156,9 +226,6 @@ if archivo_csv:
             df_canvas = df_canvas_raw.copy()
             df_canvas.columns = cols_lower
 
-            # ==========================================
-            # --- CASO 1: SUBMISSIONS ---
-            # ==========================================
             if es_submissions:
                 df_canvas = df_canvas.dropna(subset=['canvas user id'])
                 df_canvas['id_match'] = df_canvas['canvas user id'].apply(forzar_id_string)
@@ -174,13 +241,21 @@ if archivo_csv:
                     (df_canvas['actividad_limpia'] == actividad_objetivo) & 
                     (df_canvas['workflow state'].isin(['submitted', 'graded']))
                 ].copy()
-                entregas_validas['llave_cruce'] = entregas_validas['id_match'] + "_" + entregas_validas['materia_match']
+                entregas_validas['llave_cruce'] = (
+                    entregas_validas['id_match'] + "_" + entregas_validas['materia_match']
+                )
                 lista_cumplidores = entregas_validas['llave_cruce'].unique()
 
                 df_excel = pd.read_excel(archivo_xlsx)
                 df_excel.columns = df_excel.columns.str.strip().str.lower()
                 
-                col_canvas_excel = 'canvas_id' if 'canvas_id' in df_excel.columns else ('canvas id' if 'canvas id' in df_excel.columns else 'id_alumno')
+                if 'canvas_id' in df_excel.columns:
+                    col_canvas_excel = 'canvas_id'
+                elif 'canvas id' in df_excel.columns:
+                    col_canvas_excel = 'canvas id'
+                else:
+                    col_canvas_excel = 'id_alumno'
+                    
                 col_dni_excel = 'dni' if 'dni' in df_excel.columns else 'documento'
                 
                 df_excel['id_match'] = df_excel[col_canvas_excel].apply(forzar_id_string)
@@ -192,10 +267,18 @@ if archivo_csv:
                 if "API" in actividad_objetivo.upper():
                     df_universo = df_universo[~df_universo['materia_match'].isin(LISTA_NEGRA_LIMPIA)]
                 
-                df_universo['llave_cruce'] = df_universo['id_match'] + "_" + df_universo['materia_match']
+                df_universo['llave_cruce'] = (
+                    df_universo['id_match'] + "_" + df_universo['materia_match']
+                )
                 df_deudores = df_universo[~df_universo['llave_cruce'].isin(lista_cumplidores)].copy()
                 
-                col_n = 'nombres' if 'nombres' in df_deudores.columns else ('student' if 'student' in df_deudores.columns else df_deudores.columns[2])
+                if 'nombres' in df_deudores.columns:
+                    col_n = 'nombres'
+                elif 'student' in df_deudores.columns:
+                    col_n = 'student'
+                else:
+                    col_n = df_deudores.columns[2]
+                    
                 df_deudores['nombre'] = df_deudores[col_n].apply(extraer_primer_nombre)
                 df_deudores['materia'] = df_deudores['materia'].astype(str).str.strip().str.upper()
                 df_deudores['dni'] = df_deudores[col_dni_excel].apply(forzar_id_string)
@@ -211,15 +294,10 @@ if archivo_csv:
 
                 st.session_state.nombre_base = f"Faltan_{actividad_objetivo.replace(' ', '_')}"
 
-            # ==========================================
-            # --- CASO 2: CALIFICACIONES (CORREGIDO) ---
-            # ==========================================
             else:
-                # 1. Eliminar filas de control de Canvas de forma segura (Points y solo lectura)
                 df_canvas = df_canvas[df_canvas['student'].notna()]
                 df_canvas = df_canvas[~df_canvas['student'].str.contains('Points|Possible|solo lectura|read only', case=False, na=False)]
                 
-                # 2. Selección estricta de la columna DNI
                 if 'sis login id' in cols_lower:
                     col_dni_canvas = 'sis login id'
                 elif 'login id' in cols_lower:
@@ -229,8 +307,10 @@ if archivo_csv:
                 
                 df_canvas['id_match'] = df_canvas[col_dni_canvas].apply(forzar_id_string)
                 
-                try: m_archivo = archivo_csv.name.split("Calificaciones-")[1].split(".")[0].replace("_", " ")
-                except: m_archivo = "MATERIA_DETECTADA"
+                try: 
+                    m_archivo = archivo_csv.name.split("Calificaciones-")[1].split(".")[0].replace("_", " ")
+                except: 
+                    m_archivo = "MATERIA_DETECTADA"
                 
                 m_limpia = limpiar_texto(m_archivo)
                 excluir = any(x in m_limpia for x in ["API", "AP"])
@@ -249,11 +329,18 @@ if archivo_csv:
                     df_excel = pd.read_excel(archivo_xlsx)
                     df_excel.columns = df_excel.columns.str.strip().str.lower()
                     
-                    col_id_e = 'dni' if 'dni' in df_excel.columns else ('id_alumno' if 'id_alumno' in df_excel.columns else df_excel.columns[0])
+                    if 'dni' in df_excel.columns:
+                        col_id_e = 'dni'
+                    elif 'id_alumno' in df_excel.columns:
+                        col_id_e = 'id_alumno'
+                    else:
+                        col_id_e = df_excel.columns[0]
+                        
                     df_excel['id_match'] = df_excel[col_id_e].apply(forzar_id_string)
                     df_excel['materia_match'] = df_excel['materia'].apply(limpiar_texto)
                     
-                    if excluir: df_excel = df_excel[~df_excel['materia_match'].isin(LISTA_NEGRA_LIMPIA)]
+                    if excluir: 
+                        df_excel = df_excel[~df_excel['materia_match'].isin(LISTA_NEGRA_LIMPIA)]
                     
                     df_cruce = pd.merge(df_canvas, df_excel, on='id_match', how='inner')
                     
@@ -268,9 +355,6 @@ if archivo_csv:
 
                 st.session_state.nombre_base = f"Base_{m_archivo.replace(' ', '_')}"
 
-            # =======================================================
-            # --- APLICACIÓN DE LIMPIEZA ABSOLUTA DE CARACTERES ---
-            # =======================================================
             if 'nombre' in df_resultado_crudo.columns:
                 df_resultado_crudo['nombre'] = df_resultado_crudo['nombre'].apply(limpiar_caracteres_especiales)
             if 'materia' in df_resultado_crudo.columns:
@@ -300,16 +384,64 @@ if archivo_csv:
             st.session_state.opcion_base_guardada = opcion_base
             st.rerun()
 
-    # --- ZONA DE RENDERIZADO DE RESULTADOS INDEPENDIENTE ---
     if 'df_final_procesado' in st.session_state:
         df_final = st.session_state.df_final_procesado.copy()
         total_filas = len(df_final)
         opcion_guardada = st.session_state.get('opcion_base_guardada', opcion_base)
         
         st.divider()
-        st.success(f"✅ ¡Estructura de datos lista! Se generaron {total_filas} registros (Tildes y Ñs eliminadas por completo).")
+        st.success(f"✅ ¡Estructura de datos lista! Se generaron {total_filas} registros (Tildes y Ñs eliminadas).")
         
         st.write("### 📥 Descargar Archivos")
         output = io.BytesIO()
         if opcion_guardada == "Base para HubSpot":
             with pd.ExcelWriter(
+                output, 
+                engine='xlsxwriter'
+            ) as writer:
+                df_final.to_excel(
+                    writer, 
+                    index=False, 
+                    header=True
+                )
+            
+            btn_lbl = f"📥 Descargar Base HubSpot ({total_filas} filas)"
+            f_name = f"{st.session_state.nombre_base}-HUB.xlsx"
+            st.download_button(
+                label=btn_lbl,
+                data=output.getvalue(),
+                file_name=f_name,
+                type="primary"
+            )
+        else:
+            grid = st.columns(3)
+            for i in range(0, total_filas, 100):
+                chunk = df_final.iloc[i : i + 100]
+                parte = (i // 100) + 1
+                out_chunk = io.BytesIO()
+                with pd.ExcelWriter(
+                    out_chunk, 
+                    engine='xlsxwriter'
+                ) as writer:
+                    chunk.to_excel(
+                        writer, 
+                        index=False, 
+                        header=False
+                    )
+                
+                chunk_lbl = f"📥 Parte {parte} ({len(chunk)} filas)"
+                chunk_file = f"{st.session_state.nombre_base}-WSP_{parte}.xlsx"
+                with grid[(i//100) % 3]:
+                    st.download_button(
+                        label=chunk_lbl,
+                        data=out_chunk.getvalue(),
+                        file_name=chunk_file
+                    )
+        
+        st.write("### 👁️ Vista previa de salida:")
+        st.dataframe(df_final)
+
+st.divider()
+if st.button("➕ Nueva Carga"):
+    reiniciar_aplicacion()
+    st.rerun()
