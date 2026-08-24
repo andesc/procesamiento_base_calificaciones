@@ -212,28 +212,38 @@ if archivos_listos:
         st.markdown("### 📝 Configuración opcional: Template de Meta")
         texto_template = st.text_area(
             "Pegá el contenido de tu plantilla de Meta aquí si deseas estructurar las columnas de salida:",
-            placeholder="Hola {{1}}, recordá entregar la actividad de {{2}}.",
+            placeholder="Hola {{1}}, recordá entregar la actividad de {{2}}. Saludos, {{3}}",
             key="template_meta_antepuesto"
         )
         
         params_detectados = sorted(list(set(re.findall(r'\{\{(\d+)\}\}', texto_template))), key=int)
         if params_detectados:
             st.info(f"💡 Variables dinámicas detectadas: {len(params_detectados)}")
-            cols_p = st.columns(min(len(params_detectados), 4))
             
-            for idx, p in enumerate(params_detectados):
-                with cols_p[idx % 4]:
+            for p in params_detectados:
+                st.markdown(f"**Configuración para Variable `{{{{{p}}}}}`:**")
+                cols_p = st.columns([1, 2])
+                with cols_p[0]:
                     seleccion = st.selectbox(
-                        f"Variable {{{{ {p} }}}}:", 
+                        f"Tipo de dato:", 
                         options=["dni", "nombre", "materia", "actividad", "✍️ Texto Fijo"], 
                         key=f"sel_{p}"
                     )
+                with cols_p[1]:
                     if seleccion == "✍️ Texto Fijo":
-                        txt_fijo = st.text_input(f"Texto fijo para {{{{ {p} }}}}:", key=f"fijo_{p}")
-                        dict_mapeo_params[p] = ("fijo", txt_fijo)
+                        st.caption("Escribí el texto fijo/tutor para cada equipo:")
+                        col_t1, col_t2, col_t3 = st.columns(3)
+                        with col_t1:
+                            t_it = st.text_input("IT", key=f"fijo_{p}_it", placeholder="Tutor IT")
+                        with col_t2:
+                            t_comu = st.text_input("COMU", key=f"fijo_{p}_comu", placeholder="Tutor COMU")
+                        with col_t3:
+                            t_admin = st.text_input("ADMIN", key=f"fijo_{p}_admin", placeholder="Tutor ADMIN")
+                        
+                        dict_mapeo_params[p] = ("fijo_equipos", {"IT": t_it, "COMU": t_comu, "ADMIN": t_admin, "OTROS": t_it})
                     else:
                         dict_mapeo_params[p] = ("columna", seleccion)
-        st.markdown("---")
+                st.markdown("---")
 
     # =======================================================
     # --- PROCESAMIENTO AL PRESIONAR EL BOTÓN ---
@@ -244,7 +254,6 @@ if archivos_listos:
         df_excel = pd.read_excel(archivo_xlsx)
         df_excel.columns = df_excel.columns.str.strip()
         
-        # --- NUEVAS REGLAS DE FILTRADO EN EXCEL ---
         # A) estado_baja_definitiva: solo incluir vacías
         col_baja = [c for c in df_excel.columns if c.lower() == 'estado_baja_definitiva']
         if col_baja:
@@ -398,12 +407,11 @@ if archivos_listos:
         # =======================================================
         # --- CONSOLIDACIÓN POR ALUMNO (DOS MATERIAS) ---
         # =======================================================
-        # Si un alumno debe en más de una materia, se agrupa y se asigna "EN AMBAS MATERIAS"
         if 'dni' in df_resultado_crudo.columns and 'materia' in df_resultado_crudo.columns:
             conteo_materias = df_resultado_crudo.groupby('dni')['materia'].transform('nunique')
             df_resultado_crudo.loc[conteo_materias >= 2, 'materia'] = "EN AMBAS MATERIAS"
 
-        # --- LIMPIEZA ABSOLUTA Y FORMATEO DE SALIDA ---
+        # --- LIMPIEZA ABSOLUTA DE CARACTERES ---
         if 'nombre' in df_resultado_crudo.columns:
             df_resultado_crudo['nombre'] = df_resultado_crudo['nombre'].apply(limpiar_caracteres_especiales)
         if 'materia' in df_resultado_crudo.columns:
@@ -411,21 +419,25 @@ if archivos_listos:
         if 'email' in df_resultado_crudo.columns:
             df_resultado_crudo['email'] = df_resultado_crudo['email'].apply(limpiar_caracteres_especiales)
 
-        # Retener columnas base necesarias
         df_resultado_crudo['actividad'] = limpiar_caracteres_especiales(actividad_objetivo)
 
+        # --- SELECCIÓN DE ESTRUCTURA SEGÚN DESTINO ---
         if opcion_base == "Base para HubSpot":
+            # CORRECCIÓN 1: Conservar solo la columna email y equipo (para la división posterior)
             cols_salida = ['email', 'equipo']
-            df_final_pre = df_resultado_crudo.dropna(subset=['email']).drop_duplicates(subset=['email'])
+            df_final_pre = df_resultado_crudo[cols_salida].dropna(subset=['email']).drop_duplicates(subset=['email'])
         else:
+            # CORRECCIÓN 2: Asignación dinámica de texto fijo/tutor por equipo
             if params_detectados:
                 df_meta_build = pd.DataFrame()
                 df_meta_build['dni'] = df_resultado_crudo['dni']
                 
                 for p in params_detectados:
                     tipo, valor = dict_mapeo_params[p]
-                    if tipo == "fijo":
-                        df_meta_build[f"param_{p}"] = limpiar_caracteres_especiales(valor)
+                    if tipo == "fijo_equipos":
+                        # Mapear el tutor correcto según el equipo de cada fila
+                        dict_tutores = valor
+                        df_meta_build[f"param_{p}"] = df_resultado_crudo['equipo'].map(dict_tutores).fillna("").apply(limpiar_caracteres_especiales)
                     else:
                         df_meta_build[f"param_{p}"] = df_resultado_crudo[valor].values
                 
@@ -450,7 +462,6 @@ if archivos_listos:
         
         st.write("### 📥 Descargar Archivos por Equipo")
         
-        # Agrupar por equipo (IT, COMU, ADMIN, OTROS)
         equipos_presentes = df_final['equipo'].unique()
         
         zip_buffer = io.BytesIO()
