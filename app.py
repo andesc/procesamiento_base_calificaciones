@@ -7,12 +7,39 @@ import zipfile
 # --- CONFIGURACIÓN DE LA PÁGINA ---
 st.set_page_config(page_title="Generador de bases", page_icon="🛠️")
 
+# --- MAPEO DE EQUIPOS POR CARRERA ---
+MAPEO_EQUIPOS = {
+    "IT": [
+        "DATA SCIENCE", "SEGURIDAD INFORMÁTICA", "SEGURIDAD INFORMATICA",
+        "CLOUD ADMINISTRATION", "PROGRAMACIÓN", "PROGRAMACION",
+        "REDES INFORMÁTICAS", "REDES INFORMATICAS", "QA"
+    ],
+    "COMU": [
+        "PLANIFICACIÓN Y ORGANIZACIÓN DE EVENTOS", "PLANIFICACION Y ORGANIZACION DE EVENTOS",
+        "PERIODISMO Y NUEVAS TECNOLOGÍAS", "PERIODISMO Y NUEVAS TECNOLOGIAS",
+        "MARKETING DIGITAL", "INBOUND MARKETING", "VENTA DIRECTA",
+        "CUSTOMER EXPERIENCE", "GESTIÓN HOTELERA", "GESTION HOTELERA"
+    ],
+    "ADMIN": [
+        "RELACIONES LABORALES", "SEGUROS", "GESTIÓN CONTABLE", "GESTION CONTABLE",
+        "GESTIÓN DE LA EMPRESA AGRARIA", "GESTION DE LA EMPRESA AGRARIA"
+    ]
+}
+
+def obtener_equipo(carrera):
+    if pd.isna(carrera): return "OTROS"
+    c_limpia = str(carrera).upper().strip()
+    for equipo, lista_carreras in MAPEO_EQUIPOS.items():
+        for c in lista_carreras:
+            if c in c_limpia:
+                return equipo
+    return "OTROS"
+
 # --- FUNCIONES DE UTILERÍA ---
 def reiniciar_aplicacion():
-    if 'df_final_procesado' in st.session_state: del st.session_state.df_final_procesado
-    if 'nombre_base' in st.session_state: del st.session_state.nombre_base
-    if 'opcion_base_guardada' in st.session_state: del st.session_state.opcion_base_guardada
-    st.session_state.count += 1
+    for key in list(st.session_state.keys()):
+        del st.session_state[key]
+    st.rerun()
 
 def limpiar_texto(texto):
     if pd.isna(texto): return ""
@@ -156,12 +183,11 @@ if archivos_listos:
     st.markdown("### 🔍 Parámetros de Búsqueda")
     
     if modo_trabajo == "ACCIONES_DIARIAS":
-        # Selección exclusiva de Autoevaluaciones para acciones diarias
         actividad_objetivo = st.selectbox(
             "Selecciona la actividad a reclamar:", 
             ["Módulo 1 - Autoevaluación", "Módulo 2 - Autoevaluación", "Módulo 3 - Autoevaluación", "Módulo 4 - Autoevaluación"]
         )
-        materias_seleccionadas = [] # No aplica multiselect de materias en este modo simplificado
+        materias_seleccionadas = []
     else:
         if es_submissions:
             st.info("📂 **Reporte de Entregas (Submissions) detectado.**")
@@ -214,24 +240,47 @@ if archivos_listos:
     # =======================================================
     if st.button("🔍 Calcular Deudores Reales", type="primary"):
         
-        # 1. Carga y Filtrado de Cohorte en el Excel Base (Aplica a ambos modos)
+        # 1. Carga del Excel Base
         df_excel = pd.read_excel(archivo_xlsx)
         df_excel.columns = df_excel.columns.str.strip()
         
+        # --- NUEVAS REGLAS DE FILTRADO EN EXCEL ---
+        # A) estado_baja_definitiva: solo incluir vacías
+        col_baja = [c for c in df_excel.columns if c.lower() == 'estado_baja_definitiva']
+        if col_baja:
+            c_b = col_baja[0]
+            df_excel = df_excel[df_excel[c_b].isna() | (df_excel[c_b].astype(str).str.strip() == '')]
+
+        # B) homologada: solo incluir vacías
+        col_homo = [c for c in df_excel.columns if c.lower() == 'homologada']
+        if col_homo:
+            c_h = col_homo[0]
+            df_excel = df_excel[df_excel[c_h].isna() | (df_excel[c_h].astype(str).str.strip() == '')]
+
+        # C) Filtro de Cohorte (NI / RI)
         if periodo_actual_sel:
-            col_p_carrera = [c for c in df_excel.columns if c.lower() == 'periodo inicio carrera'][0]
-            df_excel[col_p_carrera] = df_excel[col_p_carrera].astype(str).str.strip()
-            
-            if filtro_ingreso == "Solo Nuevos Ingresantes (NI)":
-                df_excel = df_excel[df_excel[col_p_carrera] == str(periodo_actual_sel).strip()]
-            elif filtro_ingreso == "Solo Reingresantes (RI)":
-                df_excel = df_excel[df_excel[col_p_carrera] != str(periodo_actual_sel).strip()]
+            col_p_carrera = [c for c in df_excel.columns if c.lower() == 'periodo inicio carrera']
+            if col_p_carrera:
+                c_p = col_p_carrera[0]
+                df_excel[c_p] = df_excel[c_p].astype(str).str.strip()
+                
+                if filtro_ingreso == "Solo Nuevos Ingresantes (NI)":
+                    df_excel = df_excel[df_excel[c_p] == str(periodo_actual_sel).strip()]
+                elif filtro_ingreso == "Solo Reingresantes (RI)":
+                    df_excel = df_excel[df_excel[c_p] != str(periodo_actual_sel).strip()]
+
+        # D) Identificación de Equipo según columna 'carrera'
+        col_carrera = [c for c in df_excel.columns if c.lower() == 'carrera']
+        if col_carrera:
+            c_car = col_carrera[0]
+            df_excel['equipo'] = df_excel[c_car].apply(obtener_equipo)
+        else:
+            df_excel['equipo'] = 'OTROS'
 
         # =======================================================
         # --- MODO ACCIONES DIARIAS (SOLO EXCEL) ---
         # =======================================================
         if modo_trabajo == "ACCIONES_DIARIAS":
-            # Mapeo de la selección a la columna real del Excel
             mapa_columnas_ae = {
                 "Módulo 1 - Autoevaluación": "nota_mod_1",
                 "Módulo 2 - Autoevaluación": "nota_mod_2",
@@ -241,14 +290,12 @@ if archivos_listos:
             columna_nota_objetivo = mapa_columnas_ae[actividad_objetivo]
             
             if columna_nota_objetivo in df_excel.columns:
-                # Filtrar deudores: Nota vacía OR Nota < 60
                 df_excel['nota_eval_num'] = df_excel[columna_nota_objetivo].apply(forzar_score_float)
                 df_deudores = df_excel[df_excel[columna_nota_objetivo].isna() | (df_excel['nota_eval_num'] < 60.0)].copy()
             else:
                 st.error(f"❌ No se encontró la columna '{columna_nota_objetivo}' en tu archivo Excel.")
                 st.stop()
                 
-            df_excel.columns = df_excel.columns.str.lower()
             df_deudores.columns = df_deudores.columns.str.lower()
             
             col_n = 'nombres' if 'nombres' in df_deudores.columns else df_deudores.columns[2]
@@ -258,11 +305,7 @@ if archivos_listos:
             col_dni_excel = 'dni' if 'dni' in df_deudores.columns else 'documento'
             df_deudores['dni'] = df_deudores[col_dni_excel].apply(forzar_id_string)
             
-            if opcion_base == "Base para HubSpot":
-                df_resultado_crudo = df_deudores[['email']].dropna().drop_duplicates()
-            else:
-                df_resultado_crudo = df_deudores[['dni', 'nombre', 'materia']].drop_duplicates(subset=['dni', 'materia'])
-                
+            df_resultado_crudo = df_deudores.copy()
             st.session_state.nombre_base = f"Acciones_Diarias_{actividad_objetivo.replace(' ', '_')}"
 
         # =======================================================
@@ -321,15 +364,7 @@ if archivos_listos:
                 df_deudores['materia'] = df_deudores['materia'].astype(str).str.strip().str.upper()
                 df_deudores['dni'] = df_deudores[col_dni_excel].apply(forzar_id_string)
                 
-                if opcion_base == "Base para HubSpot":
-                    df_resultado_crudo = df_deudores[['email']].dropna().drop_duplicates()
-                else:
-                    df_resultado_crudo = df_deudores[['dni', 'nombre', 'materia']].drop_duplicates(subset=['dni', 'materia'])
-                    if not materias_seleccionadas:
-                        mults = df_resultado_crudo['dni'].value_counts()
-                        df_resultado_crudo.loc[df_resultado_crudo['dni'].isin(mults[mults >= 2].index), 'materia'] = "DOS MATERIAS"
-                        df_resultado_crudo = df_resultado_crudo.drop_duplicates(subset=['dni', 'materia'])
-
+                df_resultado_crudo = df_deudores.copy()
                 st.session_state.nombre_base = f"Faltan_{actividad_objetivo.replace(' ', '_')}"
 
             # --- CASO B: CALIFICACIONES ---
@@ -351,21 +386,24 @@ if archivos_listos:
                 if excluir: df_excel = df_excel[~df_excel['materia_match'].isin(LISTA_NEGRA_LIMPIA)]
                 
                 df_cruce = pd.merge(df_canvas, df_excel, on='id_match', how='inner')
+                col_dni_excel = 'dni' if 'dni' in df_cruce.columns else 'documento'
                 
-                if opcion_base == "Base para HubSpot":
-                    df_resultado_crudo = df_cruce[['email']].dropna().drop_duplicates()
-                else:
-                    df_f = pd.DataFrame()
-                    df_f['dni'] = df_cruce['id_match']
-                    df_f['nombre'] = df_cruce['student'].apply(extraer_primer_nombre)
-                    df_f['materia'] = m_archivo.strip().upper()
-                    df_resultado_crudo = df_f.drop_duplicates(subset=['dni', 'materia'])
-
+                df_cruce['dni'] = df_cruce[col_dni_excel].apply(forzar_id_string)
+                df_cruce['nombre'] = df_cruce['student'].apply(extraer_primer_nombre)
+                df_cruce['materia'] = m_archivo.strip().upper()
+                
+                df_resultado_crudo = df_cruce.copy()
                 st.session_state.nombre_base = f"Base_{m_archivo.replace(' ', '_')}"
 
         # =======================================================
-        # --- LIMPIEZA ABSOLUTA Y FORMATEO DE SALIDA ---
+        # --- CONSOLIDACIÓN POR ALUMNO (DOS MATERIAS) ---
         # =======================================================
+        # Si un alumno debe en más de una materia, se agrupa y se asigna "EN AMBAS MATERIAS"
+        if 'dni' in df_resultado_crudo.columns and 'materia' in df_resultado_crudo.columns:
+            conteo_materias = df_resultado_crudo.groupby('dni')['materia'].transform('nunique')
+            df_resultado_crudo.loc[conteo_materias >= 2, 'materia'] = "EN AMBAS MATERIAS"
+
+        # --- LIMPIEZA ABSOLUTA Y FORMATEO DE SALIDA ---
         if 'nombre' in df_resultado_crudo.columns:
             df_resultado_crudo['nombre'] = df_resultado_crudo['nombre'].apply(limpiar_caracteres_especiales)
         if 'materia' in df_resultado_crudo.columns:
@@ -373,11 +411,13 @@ if archivos_listos:
         if 'email' in df_resultado_crudo.columns:
             df_resultado_crudo['email'] = df_resultado_crudo['email'].apply(limpiar_caracteres_especiales)
 
+        # Retener columnas base necesarias
+        df_resultado_crudo['actividad'] = limpiar_caracteres_especiales(actividad_objetivo)
+
         if opcion_base == "Base para HubSpot":
-            st.session_state.df_final_procesado = df_resultado_crudo.copy()
+            cols_salida = ['email', 'equipo']
+            df_final_pre = df_resultado_crudo.dropna(subset=['email']).drop_duplicates(subset=['email'])
         else:
-            df_resultado_crudo['actividad'] = limpiar_caracteres_especiales(actividad_objetivo)
-            
             if params_detectados:
                 df_meta_build = pd.DataFrame()
                 df_meta_build['dni'] = df_resultado_crudo['dni']
@@ -388,71 +428,98 @@ if archivos_listos:
                         df_meta_build[f"param_{p}"] = limpiar_caracteres_especiales(valor)
                     else:
                         df_meta_build[f"param_{p}"] = df_resultado_crudo[valor].values
-                st.session_state.df_final_procesado = df_meta_build.copy()
+                
+                df_meta_build['equipo'] = df_resultado_crudo['equipo'].values
+                df_final_pre = df_meta_build.drop_duplicates(subset=['dni'])
             else:
-                st.session_state.df_final_procesado = df_resultado_crudo[['dni', 'nombre', 'materia', 'actividad']].copy()
-        
+                df_final_pre = df_resultado_crudo[['dni', 'nombre', 'materia', 'actividad', 'equipo']].drop_duplicates(subset=['dni'])
+
         sufijo_cohorte = "_NI" if filtro_ingreso == "Solo Nuevos Ingresantes (NI)" else ("_RI" if filtro_ingreso == "Solo Reingresantes (RI)" else "")
         st.session_state.nombre_base += sufijo_cohorte
+        st.session_state.df_final_procesado = df_final_pre.copy()
         st.session_state.opcion_base_guardada = opcion_base
-        st.rerun()
 
-    # --- ZONA DE RENDERIZADO DE RESULTADOS INDEPENDIENTE ---
+    # --- ZONA DE RENDERIZADO DE RESULTADOS POR EQUIPO ---
     if 'df_final_procesado' in st.session_state:
         df_final = st.session_state.df_final_procesado.copy()
         total_filas = len(df_final)
         opcion_guardada = st.session_state.get('opcion_base_guardada', opcion_base)
         
         st.divider()
-        st.success(f"✅ ¡Estructura de datos lista! Se generaron {total_filas} registros limpios y filtrados.")
+        st.success(f"✅ ¡Estructura de datos lista! Se generaron {total_filas} registros unificados por alumno y filtrados.")
         
-        st.write("### 📥 Descargar Archivos")
-        output = io.BytesIO()
+        st.write("### 📥 Descargar Archivos por Equipo")
         
-        if opcion_guardada == "Base para HubSpot":
-            with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
-                df_final.to_excel(writer, index=False, header=True)
-            st.download_button(label=f"📥 Descargar Base HubSpot ({total_filas} filas)", data=output.getvalue(), file_name=f"{st.session_state.nombre_base}-HUB.xlsx", type="primary")
-        else:
-            zip_buffer = io.BytesIO()
-            with zipfile.ZipFile(zip_buffer, "w", zipfile.ZIP_DEFLATED) as zip_file:
-                for i in range(0, total_filas, 100):
-                    chunk = df_final.iloc[i : i + 100]
-                    parte = (i // 100) + 1
-                    
-                    chunk_buffer = io.BytesIO()
-                    with pd.ExcelWriter(chunk_buffer, engine='xlsxwriter') as writer:
-                        chunk.to_excel(writer, index=False, header=False)
-                    
-                    nombre_archivo_parte = f"{st.session_state.nombre_base}-WSP_{parte}.xlsx"
-                    zip_file.writestr(nombre_archivo_parte, chunk_buffer.getvalue())
-            
-            st.download_button(
-                label=f"📥 Descargar Todas las Partes (.ZIP)",
-                data=zip_buffer.getvalue(),
-                file_name=f"{st.session_state.nombre_base}-TODAS_LAS_PARTES.zip",
-                type="primary",
-                use_container_width=True
-            )
-            
-            st.markdown("<p style='text-align: center; color: gray; margin-top:-10px;'>Ideal para bajar todo junto en un clic y descomprimirlo en tu carpeta</p>", unsafe_allow_html=True)
-            st.write("---")
-            st.write("📂 *O si preferís, podés bajarlas de manera individual:*")
-            
-            grid = st.columns(3)
-            for i in range(0, total_filas, 100):
-                chunk = df_final.iloc[i : i + 100]
-                parte = (i // 100) + 1
-                out_chunk = io.BytesIO()
-                with pd.ExcelWriter(out_chunk, engine='xlsxwriter') as writer:
-                    chunk.to_excel(writer, index=False, header=False)
-                with grid[(i//100) % 3]:
-                    st.download_button(label=f"📦 Parte {parte} ({len(chunk)} filas)", data=out_chunk.getvalue(), file_name=f"{st.session_state.nombre_base}-WSP_{parte}.xlsx")
+        # Agrupar por equipo (IT, COMU, ADMIN, OTROS)
+        equipos_presentes = df_final['equipo'].unique()
         
-        st.write("### 👁️ Vista previa de salida:")
+        zip_buffer = io.BytesIO()
+        with zipfile.ZipFile(zip_buffer, "w", zipfile.ZIP_DEFLATED) as zip_file:
+            for eq in equipos_presentes:
+                df_eq = df_final[df_final['equipo'] == eq].drop(columns=['equipo'])
+                if df_eq.empty: continue
+                
+                if opcion_guardada == "Base para HubSpot":
+                    eq_buffer = io.BytesIO()
+                    with pd.ExcelWriter(eq_buffer, engine='xlsxwriter') as writer:
+                        df_eq.to_excel(writer, index=False, header=True)
+                    nombre_ar = f"{eq}_{st.session_state.nombre_base}-HUB.xlsx"
+                    zip_file.writestr(nombre_ar, eq_buffer.getvalue())
+                else:
+                    for i in range(0, len(df_eq), 100):
+                        chunk = df_eq.iloc[i : i + 100]
+                        parte = (i // 100) + 1
+                        chunk_buffer = io.BytesIO()
+                        with pd.ExcelWriter(chunk_buffer, engine='xlsxwriter') as writer:
+                            chunk.to_excel(writer, index=False, header=False)
+                        nombre_ar = f"{eq}_{st.session_state.nombre_base}-WSP_{parte}.xlsx"
+                        zip_file.writestr(nombre_ar, chunk_buffer.getvalue())
+
+        st.download_button(
+            label="📥 Descargar TODOS los Archivos de Equipos (.ZIP)",
+            data=zip_buffer.getvalue(),
+            file_name=f"{st.session_state.nombre_base}-TODOS_LOS_EQUIPOS.zip",
+            type="primary",
+            use_container_width=True
+        )
+        
+        st.write("---")
+        st.write("📂 *Archivos generados de manera individual por equipo:*")
+        
+        cols_eq = st.columns(len(equipos_presentes))
+        for idx, eq in enumerate(equipos_presentes):
+            df_eq = df_final[df_final['equipo'] == eq].drop(columns=['equipo'])
+            with cols_eq[idx]:
+                st.markdown(f"#### 👥 Equipo: {eq}")
+                st.caption(f"Total registros: {len(df_eq)}")
+                
+                if opcion_guardada == "Base para HubSpot":
+                    out_eq = io.BytesIO()
+                    with pd.ExcelWriter(out_eq, engine='xlsxwriter') as writer:
+                        df_eq.to_excel(writer, index=False, header=True)
+                    st.download_button(
+                        label=f"📥 {eq} - Base HubSpot",
+                        data=out_eq.getvalue(),
+                        file_name=f"{eq}_{st.session_state.nombre_base}-HUB.xlsx",
+                        key=f"btn_{eq}_hub"
+                    )
+                else:
+                    for i in range(0, len(df_eq), 100):
+                        chunk = df_eq.iloc[i : i + 100]
+                        parte = (i // 100) + 1
+                        out_chunk = io.BytesIO()
+                        with pd.ExcelWriter(out_chunk, engine='xlsxwriter') as writer:
+                            chunk.to_excel(writer, index=False, header=False)
+                        st.download_button(
+                            label=f"📦 {eq} - Parte {parte} ({len(chunk)} filas)",
+                            data=out_chunk.getvalue(),
+                            file_name=f"{eq}_{st.session_state.nombre_base}-WSP_{parte}.xlsx",
+                            key=f"btn_{eq}_wsp_{parte}"
+                        )
+
+        st.write("### 👁️ Vista previa unificada de salida:")
         st.dataframe(df_final)
 
 st.divider()
 if st.button("➕ Nueva Carga"):
     reiniciar_aplicacion()
-    st.rerun()
